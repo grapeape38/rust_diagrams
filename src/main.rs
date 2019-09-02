@@ -13,7 +13,7 @@ use primitives::{*};
 fn main() {
     let sdl = sdl2::init().unwrap();
     let video_subsystem = sdl.video().unwrap();
-    const VIEWPORT: Point = Point{x:900, y:700};
+    const VIEWPORT: Point = Point{x:1100, y:700};
     let window = video_subsystem
         .window("Game", VIEWPORT.x as u32, VIEWPORT.y as u32)
         .opengl()
@@ -57,9 +57,70 @@ fn main() {
     let line_ctx = DrawCtx::new(line_prog, VIEWPORT);
 
     let mut event_pump = sdl.event_pump().unwrap();
+    
+    let mut shapes = DrawList::new();
+    let mut lines = DrawList::new();
+
+    shapes.add(ShapeBuilder::new() 
+        .tri(100)
+        .offset(200,200)
+        .color(0, 255, 0).get()
+    );
+    shapes.add(ShapeBuilder::new() 
+        .rect(200, 100)
+        .offset(400,200)
+        .rot(45.)
+        .color(0, 0, 255).get()
+    );
+    shapes.add(ShapeBuilder::new()
+        .circle(100)
+        .offset(200,400)
+        .color(255, 0, 255).get()
+    );
+    shapes.add(ShapeBuilder::new() 
+        .ellipse(200, 100)
+        .offset(400,400)
+        .color(255, 255, 0).get()
+    );
+
+    shapes.add(ShapeBuilder::new() 
+        .square(200)
+        .offset(600,600)
+        .color(255, 255, 255).get()
+    );
+
+    shapes.add(ShapeBuilder::new()
+        .square(150)
+        .rot(45.)
+        .color(200,100,200)
+        .offset(600,200).get()
+    );
+
+    lines.add(LineBuilder::new()
+        .points(200,200,400,400)
+        .color(0, 255, 255).line_width(6.).get()
+    );
+
+    lines.add(LineBuilder::new()
+        .points(200,200,400,200)
+        .color(255, 255, 255).get()
+    );
+
+    lines.add(LineBuilder::new()
+        .points(400,200,400,400)
+        .color(255, 0, 0).get()
+    );
+
+    let mut drag_state = DragState { drag_shape: None, last_pt: Point{x:0,y:0} };
+
     'main: loop {
         for event in event_pump.poll_iter() {
             match event {
+                ev @ Event::MouseMotion{..} | 
+                ev @ Event::MouseButtonDown{..} | 
+                ev @ Event::MouseButtonUp{..} => {
+                    drag_state.handle_mouse_event(&ev, &mut shapes, &VIEWPORT);
+                }
                 Event::Quit {..} | 
                 Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'main,
                 _ => {},
@@ -67,67 +128,45 @@ fn main() {
             unsafe {
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
-            let mut shapes: Vec<Shape> = Vec::new();
-            let mut lines: Vec<Line> = Vec::new();
-            shapes.push(ShapeBuilder::new() 
-                .tri(100)
-                .offset(200,200)
-                .color(0, 255, 0).into()
-            );
-            shapes.push(ShapeBuilder::new() 
-                .rect(200, 100)
-                .offset(400,200)
-                .rot(45.)
-                .color(0, 0, 255).into()
-            );
-            shapes.push(ShapeBuilder::new()
-                .circle(100)
-                .offset(200,400)
-                .color(255, 0, 255).into()
-            );
-            shapes.push(ShapeBuilder::new() 
-                .ellipse(200, 100)
-                .offset(400,400)
-                .color(255, 255, 0).into()
-            );
 
-            shapes.push(ShapeBuilder::new() 
-                .square(200)
-                .offset(600,600)
-                .color(255, 255, 255).into()
-            );
-
-            shapes.push(ShapeBuilder::new()
-                .square(150)
-                .rot(45.)
-                .color(200,100,200)
-                .offset(600,200).into()
-            );
-
-            lines.push(LineBuilder::new()
-                .points(200,200,400,400)
-                .color(0, 255, 255).line_width(6.).into()
-            );
-
-            lines.push(LineBuilder::new()
-                .points(200,200,400,200)
-                .color(255, 255, 255).into()
-            );
-
-            lines.push(LineBuilder::new()
-                .points(400,200,400,400)
-                .color(255, 0, 0).into()
-            );
-
-            for s in shapes {
-                shape_ctx.draw(s);
-            }
-
-            for l in lines {
-                line_ctx.draw(l);
-            }
+            shapes.draw_all(&shape_ctx);
+            lines.draw_all(&line_ctx);
 
             window.gl_swap_window();
+        }
+    }
+}
+
+struct DragState {
+    drag_shape: Option<u32>,
+    last_pt: Point
+}
+
+impl DragState {
+    fn handle_mouse_event(&mut self, ev: &Event, shapes: &mut DrawList, vp: &Point) {
+        match *ev {
+            Event::MouseButtonDown { mouse_btn, x, y, .. } => {
+                let pt = Point{x, y};
+                if mouse_btn == sdl2::mouse::MouseButton::Left {
+                    self.last_pt = pt;
+                    self.drag_shape = shapes.intersect(&pt, vp);
+                }
+            } 
+            Event::MouseButtonUp{mouse_btn, .. } => {
+                if mouse_btn == sdl2::mouse::MouseButton::Left {
+                    self.drag_shape = None
+                }
+            }
+            Event::MouseMotion{ x, y, ..} => {
+                if let Some(id) = self.drag_shape {
+                    let off = Point{x, y};
+                    if let Some(shape) = shapes.get_mut(&id) {
+                        shape.drag(off - self.last_pt);
+                    }
+                    self.last_pt = off;
+                }
+            }
+            _ => {}
         }
     }
 }

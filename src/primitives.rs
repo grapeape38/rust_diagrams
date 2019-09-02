@@ -79,6 +79,22 @@ impl PrimType {
             Line => 1
         }
     }
+    fn in_bounds(&self, p: &(f32, f32)) -> bool {
+        match self {
+            Triangle => {
+                p.0 >= -0.5 && p.0 <= 0.5 && p.1 <= (0.5 - f32::abs(p.0))
+            }
+            Circle => {
+                (p.0 * p.0 + p.1 * p.1) <= 1.
+            }
+            Rect => {
+                p.0 >= -0.5 && p.0 <= 0.5 && p.1 >= -0.5 && p.1 <= 0.5 
+            }
+            Line => {
+                false
+            }
+        }
+    }
 }
 
 unsafe fn buffer_verts(verts: &Vec<f32>) -> GLuint {
@@ -122,18 +138,29 @@ impl TypeParams {
     }
 }
 
-
-
 #[derive(Debug, Clone, Copy)]
 pub struct Point {
     pub x: i32,
     pub y: i32
 }
 
+impl Point {
+    fn mag(&self) -> f32 {
+        f32::sqrt((self.x * self.x + self.y * self.y) as f32)
+    }
+}
+
 impl std::ops::Add for Point {
     type Output = Point;
     fn add(self, other: Point) -> Self::Output {
         Point {x:self.x + other.x, y: self.y + other.y}
+    }
+}
+
+impl std::ops::AddAssign for Point {
+    fn add_assign(&mut self, other: Point) {
+        self.x += other.x;
+        self.y += other.y;
     }
 }
 
@@ -190,6 +217,7 @@ impl LineBuilder {
         self.l.line_width = width;
         self
     }
+    pub fn get(self) -> Line { self.l }
 }
 
 impl From<LineBuilder> for Line {
@@ -198,6 +226,30 @@ impl From<LineBuilder> for Line {
     }
 }
 
+pub struct DrawList<'a> {
+    m: HashMap<u32, Box<Drawable + 'a>>,
+    next_id: u32
+}
+
+impl<'a> DrawList<'a> {
+    pub fn new() -> DrawList<'a> {
+        DrawList {m: HashMap::new(), next_id: 0}
+    }
+    pub fn add<D: Drawable + 'a>(&mut self, s: D) {
+        self.m.insert(self.next_id, Box::new(s));
+        self.next_id+=1;
+    }
+    pub fn get_mut(&mut self, id: &u32) -> Option<&mut Box<Drawable + 'a>> {
+        self.m.get_mut(id)
+    }
+    pub fn intersect(&self, p: &Point, vp: &Point) -> Option<u32> {
+        self.m.iter().find(|(_,v)| v.in_bounds(p, vp)).map(|(k,_)| *k)
+    }
+    pub fn draw_all(&self, ctx: &DrawCtx) {
+        ctx.program.set_used();
+        self.m.values().for_each(|s| s.draw(ctx));
+    }
+}
 
 pub struct Shape {
     pub params: TypeParams,
@@ -272,6 +324,7 @@ impl ShapeBuilder {
         };
         self
     }
+    pub fn get(self) -> Shape { self.s }
 }
 
 impl From<ShapeBuilder> for Shape {
@@ -312,8 +365,8 @@ impl Shape {
     fn trans(&self, viewport: &Point) -> glm::TMat4<f32> {
         let mut trans: glm::TMat4<f32> = glm::identity();
         trans = glm::translate(&trans, &pixels_to_trans_vec(&self.offset, viewport));
-        trans = glm::rotate(&trans, 180. * self.rot / PI, &glm::vec3(0.0, 0.0, 1.0));
-        glm::scale(&trans, &self.scale(viewport))
+        trans = glm::scale(&trans, &self.scale(viewport));
+        glm::rotate(&trans, 180. * self.rot / PI, &glm::vec3(0.0, 0.0, 1.0))
     }
     fn mode(&self) -> GLenum { self.params.ptype().mode() }
     fn size(&self) -> GLint { self.params.ptype().size() as GLint }
@@ -321,6 +374,8 @@ impl Shape {
 
 pub trait Drawable {
     fn draw(&self, ctx: &DrawCtx);
+    fn drag(&mut self, dir: Point);
+    fn in_bounds(&self, p: &Point, vp: &Point) -> bool;
 }
 
 impl Drawable for Shape {
@@ -336,6 +391,15 @@ impl Drawable for Shape {
             gl::LineWidth(self.line_width as GLfloat);
             gl::DrawArrays(self.mode(), 0, self.size());
         }
+    }
+    fn drag(&mut self, dir: Point) {
+        self.offset += dir;
+    }
+    fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
+        let trans_inv = glm::inverse(&self.trans(vp));
+        let pc = pixels_to_trans_vec(p, vp);
+        let normpt = trans_inv * glm::vec4(pc.x, pc.y, pc.z, 1.0);
+        self.params.ptype().in_bounds(&(normpt.x, normpt.y))
     }
 }
 
@@ -358,6 +422,14 @@ impl Drawable for Line {
             gl::DrawArrays(gl::POINTS, 0, 1);
         }
     }
+    fn drag(&mut self, dir: Point) {
+        self.p1 += dir;
+    }
+    fn in_bounds(&self, p: &Point, _: &Point) -> bool {
+        let t = (p.x - self.p1.x) as f32 / (self.p2.x - self.p1.x) as f32;
+        let ypt = (1. - t) * self.p1.y as f32 + t * self.p2.y as f32;
+        t >= 0. && t <= 1. && p.y as f32 - ypt <= self.line_width
+    }
 }
 
 pub struct DrawCtx {
@@ -370,7 +442,7 @@ impl DrawCtx {
     pub fn new(program: Program, viewport: Point) -> DrawCtx {
         DrawCtx { prim_map: prim_map(), viewport, program }
     }
-    pub fn draw<D: Drawable>(&self, s: D) {
+    pub fn draw<D: Drawable>(&self, s: &D) {
         self.program.set_used();
         s.draw(&self);
     }
