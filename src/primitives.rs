@@ -82,7 +82,7 @@ impl PrimType {
     fn in_bounds(&self, p: &(f32, f32)) -> bool {
         match self {
             Triangle => {
-                p.0 >= -0.5 && p.0 <= 0.5 && p.1 <= (0.5 - f32::abs(p.0))
+                p.0 >= -0.5 && p.0 <= 0.5 && p.1 >= -0.5 && p.1 <= (0.5 - f32::abs(p.0))
             }
             Circle => {
                 (p.0 * p.0 + p.1 * p.1) <= 1.
@@ -363,8 +363,7 @@ impl Shape {
         glm::vec3(x_scale, y_scale, 1.0)
     }
     fn trans(&self, viewport: &Point) -> glm::TMat4<f32> {
-        let mut trans: glm::TMat4<f32> = glm::identity();
-        trans = glm::translate(&trans, &pixels_to_trans_vec(&self.offset, viewport));
+        let mut trans = glm::translate(&glm::identity(), &pixels_to_trans_vec(&self.offset, viewport));
         trans = glm::scale(&trans, &self.scale(viewport));
         glm::rotate(&trans, 180. * self.rot / PI, &glm::vec3(0.0, 0.0, 1.0))
     }

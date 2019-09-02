@@ -146,10 +146,9 @@ impl DragState {
     fn handle_mouse_event(&mut self, ev: &Event, shapes: &mut DrawList, vp: &Point) {
         match *ev {
             Event::MouseButtonDown { mouse_btn, x, y, .. } => {
-                let pt = Point{x, y};
-                if mouse_btn == sdl2::mouse::MouseButton::Left {
-                    self.last_pt = pt;
-                    self.drag_shape = shapes.intersect(&pt, vp);
+                if self.drag_shape.is_none() && mouse_btn == sdl2::mouse::MouseButton::Left {
+                    self.last_pt = Point{x,y};
+                    self.drag_shape = shapes.intersect(&self.last_pt, vp);
                 }
             } 
             Event::MouseButtonUp{mouse_btn, .. } => {
