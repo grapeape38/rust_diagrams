@@ -68,6 +68,9 @@ impl Shader {
     pub fn from_frag_source(source: &CStr) -> Result<Shader, String> {
         Shader::from_source(source, gl::FRAGMENT_SHADER)
     }
+    pub fn from_geom_source(source: &CStr) -> Result<Shader, String> {
+        Shader::from_source(source, gl::GEOMETRY_SHADER)
+    }
     pub fn id(&self) -> GLuint {
         self.id
     }

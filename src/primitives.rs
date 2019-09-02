@@ -6,10 +6,11 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::f32::{self, consts::PI};
 use PrimType::*;
+use crate::render_gl::Program;
 
 type PrimMap = HashMap<PrimType, GLuint>;
 
-pub fn new_prim_map() -> PrimMap {
+pub fn prim_map() -> PrimMap {
     let mut m = HashMap::new();
     for prim in &[Triangle, Circle, Rect, Line] {
         m.insert(*prim, prim.buffer_data());
@@ -56,9 +57,7 @@ impl PrimType {
                 ]
             },
             Line => {
-               vec![ 
-                    0.0, 0.0, 0.0,
-                    1.0, 0.0, 0.0]
+               vec![0.0, 0.0, 0.0]
             }
         }
     }
@@ -77,7 +76,7 @@ impl PrimType {
             Triangle => 3,
             Rect => 6,
             Circle => 3 * NCIRCLE_VERTS,
-            Line => 2
+            Line => 1
         }
     }
 }
@@ -110,9 +109,7 @@ unsafe fn buffer_verts(verts: &Vec<f32>) -> GLuint {
 pub enum TypeParams {
     Triangle {base: u32},
     Rect {width: u32, height: u32},
-    Circle {radius: u32},
-    Ellipse {rad_x: u32, rad_y: u32},
-    Line {p1: Point, p2: Point}
+    Ellipse {rad_x: u32, rad_y: u32}
 }
 
 impl TypeParams {
@@ -120,29 +117,17 @@ impl TypeParams {
         match self {
             TypeParams::Triangle {..} => Triangle,
             TypeParams::Rect {..} => Rect,
-            TypeParams::Circle {..} | TypeParams::Ellipse {..} => Circle,
-            TypeParams::Line {..} => Line 
+            TypeParams::Ellipse {..} => Circle
         }
     }
 }
 
-pub fn new_line(x1: i32, y1: i32, x2: i32, y2: i32) -> TypeParams {
-    TypeParams::Line {
-        p1: Point {x: x1, y: y1},
-        p2: Point {x: x2, y: y2},
-    }
-}
+
 
 #[derive(Debug, Clone, Copy)]
 pub struct Point {
     pub x: i32,
     pub y: i32
-}
-
-impl Point {
-    fn neg_y(self) -> Self {
-        Point {x: self.x, y: -self.y}
-    }
 }
 
 impl std::ops::Add for Point {
@@ -166,6 +151,54 @@ impl std::ops::Sub for Point {
     }
 }
 
+pub struct Line {
+    p1: Point,
+    p2: Point,
+    color: (u8, u8, u8),
+    line_width: f32
+}
+
+impl Line {
+    pub fn new() -> Line {
+        Line {
+            p1: Point {x: 0, y: 0},
+            p2: Point {x: 0, y: 0},
+            color: (0, 0, 0),
+            line_width: 3.
+        }
+    }
+}
+
+pub struct LineBuilder {
+    l: Line
+}
+
+impl LineBuilder {
+    pub fn new() -> LineBuilder {
+        LineBuilder { l: Line::new() }
+    }
+    pub fn points(mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> LineBuilder {
+        self.l.p1 = Point {x: x1, y: y1};
+        self.l.p2 = Point {x: x2, y: y2};
+        self
+    }
+    pub fn color(mut self, r: u8, g: u8, b: u8) -> LineBuilder {
+        self.l.color = (r,g,b);
+        self
+    }
+    pub fn line_width(mut self, width: f32) -> LineBuilder {
+        self.l.line_width = width;
+        self
+    }
+}
+
+impl From<LineBuilder> for Line {
+    fn from(lb: LineBuilder) -> Self {
+        lb.l
+    }
+}
+
+
 pub struct Shape {
     pub params: TypeParams,
     pub offset: Point, //pixels from top corner
@@ -178,13 +211,10 @@ pub struct ShapeBuilder {
     s: Shape
 }
 
+#[allow(dead_code)]
 impl ShapeBuilder {
     pub fn new() -> ShapeBuilder {
         ShapeBuilder { s: Shape::new() }
-    }
-    pub fn params(mut self, params: TypeParams) -> ShapeBuilder {
-        self.s.params = params;
-        self
     }
     pub fn offset(mut self, x: i32, y: i32) -> ShapeBuilder {
         self.s.offset = Point {x,y};
@@ -198,8 +228,48 @@ impl ShapeBuilder {
         self.s.color = (r,g,b);
         self
     }
+
     pub fn line_width(mut self, width: f32) -> ShapeBuilder {
         self.s.line_width = width;
+        self
+    }
+
+    pub fn circle(mut self, rad: u32) -> ShapeBuilder {
+        self.s.params = TypeParams::Ellipse{
+            rad_x: rad,
+            rad_y: rad
+        };
+        self
+    }
+
+    pub fn ellipse(mut self, rad_x: u32, rad_y: u32) -> ShapeBuilder {
+        self.s.params = TypeParams::Ellipse{
+            rad_x,
+            rad_y
+        };
+        self
+    }
+
+    pub fn rect(mut self, width: u32, height: u32) -> ShapeBuilder {
+        self.s.params = TypeParams::Rect {
+            width,
+            height
+        };
+        self
+    }
+
+    pub fn square(mut self, side: u32) -> ShapeBuilder {
+        self.s.params = TypeParams::Rect {
+            width: side,
+            height: side
+        };
+        self
+    }
+
+    pub fn tri(mut self, base: u32) -> ShapeBuilder {
+        self.s.params = TypeParams::Triangle {
+            base
+        };
         self
     }
 }
@@ -222,7 +292,7 @@ impl Shape {
     }
     fn scale(&self, viewport: &Point) -> glm::TVec3<f32> {
         let x_scale;
-        let mut y_scale = 1.0;
+        let y_scale; 
         match self.params {
             TypeParams::Triangle { base } => {
                 x_scale = 2. * base as f32 / viewport.x as f32;
@@ -232,78 +302,77 @@ impl Shape {
                 x_scale = 2. * width as f32 / viewport.x as f32;
                 y_scale = 2. * height as f32 / viewport.y as f32;
             }
-            TypeParams::Circle { radius } => {
-                x_scale = 2. * radius as f32 / viewport.x as f32;
-                y_scale = 2. * radius as f32 / viewport.y as f32;
-            }
             TypeParams::Ellipse { rad_x, rad_y } => {
                 x_scale = 2. * rad_x as f32 / viewport.x as f32;
                 y_scale = 2. * rad_y as f32 / viewport.y as f32;
-            }
-            TypeParams::Line { p1, p2 } => {
-                let d = p2 - p1;
-                //let mag1 = f32::sqrt((d.x * d.x + d.y * d.y) as f32);
-                //let tvec = pixels_to_trans_vec(&p1, viewport);
-                //let tvec2 = pixels_to_trans_vec(&p2, viewport);
-                //let d2 = tvec2 - tvec;
-                //let mag = f32::sqrt((d.x * d.x + d.y * d.y) as f32); 
-                x_scale = 2. * d.x as f32 / viewport.x as f32;
-                y_scale = 2. * d.y as f32 / viewport.y as f32; 
-                //y_scale = 2. * mag as f32 / viewport.y as f32;
-                //println!("scale: {:?}", x_scale);
             }
         }
         glm::vec3(x_scale, y_scale, 1.0)
     }
     fn trans(&self, viewport: &Point) -> glm::TMat4<f32> {
         let mut trans: glm::TMat4<f32> = glm::identity();
-        match self.params {
-            TypeParams::Line {p1, p2} => {
-                //trans = glm::scale(&trans, &self.scale(viewport));
-                let tvec = pixels_to_trans_vec(&p1, viewport);
-                let tvec2 = pixels_to_trans_vec(&p2, viewport);
-                trans = glm::translate(&trans, &tvec);
-                let d = tvec2 - tvec; 
-                let rad = f32::atan(d.y / d.x);
-                trans = glm::rotate(&trans, rad, &glm::vec3(0.0, 0.0, 1.0));
-                println!("{:?}", trans * glm::vec4(1.0, 0.0, 0.0, 1.0));
-                trans
-            }
-            _ => {
-                trans = glm::translate(&trans, &pixels_to_trans_vec(&self.offset, viewport));
-                trans = glm::rotate(&trans, 180. * self.rot / PI, &glm::vec3(0.0, 0.0, 1.0));
-                glm::scale(&trans, &self.scale(viewport))
-            }
-        }
+        trans = glm::translate(&trans, &pixels_to_trans_vec(&self.offset, viewport));
+        trans = glm::rotate(&trans, 180. * self.rot / PI, &glm::vec3(0.0, 0.0, 1.0));
+        glm::scale(&trans, &self.scale(viewport))
     }
     fn mode(&self) -> GLenum { self.params.ptype().mode() }
     fn size(&self) -> GLint { self.params.ptype().size() as GLint }
 }
 
-pub struct ShapeCtx {
-    prim_map: PrimMap,
-    viewport: Point,
-    program: GLuint 
+pub trait Drawable {
+    fn draw(&self, ctx: &DrawCtx);
 }
 
-impl ShapeCtx {
-    pub fn new(program: GLuint, viewport: Point) -> ShapeCtx {
-        ShapeCtx { prim_map: new_prim_map(), viewport, program}
-    }
-    pub fn draw_shape(&self, s: Shape) {
-        let trans = s.trans(&self.viewport);
-        //let test_point = glm::vec4(-0.5, 0.0, 0.0, 1.0);
-        //println!("{:?}, translated point: {:?}", s.params, trans * test_point);
-        let color = rgb_to_f32(&s.color);
+impl Drawable for Shape {
+    fn draw(&self, ctx: &DrawCtx) {
+        let trans = self.trans(&ctx.viewport);
+        let color = rgb_to_f32(&self.color);
         unsafe {
-            gl::BindVertexArray(self.prim_map[&s.params.ptype()]);
-            let trans_loc = gl::GetUniformLocation(self.program, GChar::new("transform").ptr());
+            gl::BindVertexArray(ctx.prim_map[&self.params.ptype()]);
+            let trans_loc = gl::GetUniformLocation(ctx.program.id(), GChar::new("transform").ptr());
             gl::UniformMatrix4fv(trans_loc, 1, gl::FALSE, trans.as_ptr());
-            let color_loc = gl::GetUniformLocation(self.program, GChar::new("color").ptr());
+            let color_loc = gl::GetUniformLocation(ctx.program.id(), GChar::new("color").ptr());
             gl::Uniform4f(color_loc, color.0, color.1, color.2, 1.0);
-            gl::LineWidth(s.line_width as GLfloat);
-            gl::DrawArrays(s.mode(), 0, s.size());
+            gl::LineWidth(self.line_width as GLfloat);
+            gl::DrawArrays(self.mode(), 0, self.size());
         }
+    }
+}
+
+impl Drawable for Line {
+    fn draw(&self, ctx: &DrawCtx) {
+        let mut trans: glm::TMat4<f32> = glm::identity();
+        let p1c = pixels_to_trans_vec(&self.p1, &ctx.viewport);
+        let p2c = pixels_to_trans_vec(&self.p2, &ctx.viewport);
+        trans = glm::translate(&trans, &p1c);
+        let color = rgb_to_f32(&self.color);
+        unsafe {
+            gl::BindVertexArray(ctx.prim_map[&PrimType::Line]);
+            let trans_loc = gl::GetUniformLocation(ctx.program.id(), GChar::new("transform").ptr());
+            gl::UniformMatrix4fv(trans_loc, 1, gl::FALSE, trans.as_ptr());
+            let color_loc = gl::GetUniformLocation(ctx.program.id(), GChar::new("color").ptr());
+            gl::Uniform4f(color_loc, color.0, color.1, color.2, 1.0);
+            let point2_loc = gl::GetUniformLocation(ctx.program.id(), GChar::new("point2").ptr());
+            gl::Uniform2f(point2_loc, p2c.x, p2c.y);
+            gl::LineWidth(self.line_width as GLfloat);
+            gl::DrawArrays(gl::POINTS, 0, 1);
+        }
+    }
+}
+
+pub struct DrawCtx {
+    prim_map: PrimMap,
+    viewport: Point,
+    program: Program 
+}
+
+impl DrawCtx {
+    pub fn new(program: Program, viewport: Point) -> DrawCtx {
+        DrawCtx { prim_map: prim_map(), viewport, program }
+    }
+    pub fn draw<D: Drawable>(&self, s: D) {
+        self.program.set_used();
+        s.draw(&self);
     }
 }
 
@@ -318,6 +387,12 @@ fn pixels_to_trans_vec(pixels: &Point, vp: &Point) -> glm::TVec3<f32> {
 
 fn pixels_to_coords(pixels: &Point, vp: &Point) -> (f32, f32) {
     (-1. + 2. * pixels.x as f32 / vp.x as f32, 1. - 2. * pixels.y as f32 / vp.y as f32)
+}
+
+#[allow(dead_code)]
+fn coords_to_pixels(coords: &(f32, f32), vp: &Point) -> (i32, i32) {
+    let pt = (vp.x as f32 * (coords.0 + 1.) / 2., vp.y as f32 * (1. - coords.1) / 2.);
+    (pt.0 as i32, pt.1 as i32)
 }
 
 struct GChar {
