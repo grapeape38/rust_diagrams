@@ -5,8 +5,10 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::time::{SystemTime, Duration};
 
+mod interface;
 mod render_gl;
 mod primitives;
+use interface::DrawList;
 use primitives::{*};
 
 fn main() {
@@ -38,54 +40,54 @@ fn main() {
     
     let mut shapes = DrawList::new();
 
-    shapes.add(ShapeBuilder::new() 
+    shapes.add(Box::new(ShapeBuilder::new() 
         .tri(100)
         .offset(200,200)
-        .color(0, 255, 0).get()
+        .color(0, 255, 0).get())
     );
-    shapes.add(ShapeBuilder::new() 
+    shapes.add(Box::new(ShapeBuilder::new() 
         .rect(200, 100)
         .offset(400,200)
         .rot(45.)
-        .color(0, 0, 255).get()
+        .color(0, 0, 255).get())
     );
-    shapes.add(ShapeBuilder::new()
+    shapes.add(Box::new(ShapeBuilder::new()
         .circle(100)
         .offset(200,400)
-        .color(255, 0, 255).get()
+        .color(255, 0, 255).get())
     );
-    shapes.add(ShapeBuilder::new() 
+    shapes.add(Box::new(ShapeBuilder::new() 
         .ellipse(200, 100)
         .offset(400,400)
-        .color(255, 255, 0).get()
+        .color(255, 255, 0).get())
     );
 
-    shapes.add(ShapeBuilder::new() 
+    shapes.add(Box::new(ShapeBuilder::new() 
         .square(200)
         .offset(600,600)
-        .color(255, 255, 255).get()
+        .color(255, 255, 255).get())
     );
 
-    shapes.add(ShapeBuilder::new()
+    shapes.add(Box::new(ShapeBuilder::new()
         .square(150)
         .rot(45.)
         .color(200,100,200)
-        .offset(600,200).get()
+        .offset(600,200).get())
     );
 
-    shapes.add(LineBuilder::new()
+    shapes.add(Box::new(LineBuilder::new()
         .points(200.,200.,400.,400.)
-        .color(0, 255, 255).line_width(6.).get()
+        .color(0, 255, 255).line_width(6.).get())
     );
 
-    shapes.add(LineBuilder::new()
+    shapes.add(Box::new(LineBuilder::new()
         .points(834.,338.,1000.,450.)
-        .color(255, 255, 255).get()
+        .color(255, 255, 255).get())
     );
 
-    shapes.add(LineBuilder::new()
+    shapes.add(Box::new(LineBuilder::new()
         .points(400.,200.,400.,400.)
-        .color(255, 0, 0).get()
+        .color(255, 0, 0).get())
     );
 
     let mut drag_state = DragState { drag_item: None, last_pt: Point{x:0.,y:0.} };

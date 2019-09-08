@@ -7,6 +7,7 @@ use std::ffi::CString;
 use std::f32::{self, consts::PI};
 use PrimType as PT;
 use crate::render_gl::{Shader, Program};
+use crate::interface::DrawBounds;
 
 type PrimMap = HashMap<PrimType, GLuint>;
 
@@ -168,7 +169,7 @@ unsafe fn buffer_verts(verts: &Vec<f32>) -> GLuint {
     vao
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypeParams {
     Triangle {base: u32},
     Rect {width: u32, height: u32},
@@ -289,9 +290,10 @@ impl Line {
     }
 }
 
+#[derive(Clone)]
 pub struct DrawLine {
-    p1: Point,
-    p2: Point,
+    pub p1: Point,
+    pub p2: Point,
     color: (u8, u8, u8),
     line_width: f32
 }
@@ -328,7 +330,7 @@ impl LineBuilder {
         self.l.line_width = width;
         self
     }
-    pub fn get(self) -> DrawLine { self.l }
+    pub fn get(self) -> Box<DrawBounds> { Box::new(self.l) }
 }
 
 struct ShapeTransform {
@@ -364,9 +366,10 @@ impl ShapeTransform {
     }
 }
 
+#[derive(Clone)]
 pub struct Shape {
     params: TypeParams,
-    offset: Point,
+    pub offset: Point,
     rot: f32,
     line_width: f32,
     color: (u8, u8, u8), //rgb
@@ -393,19 +396,14 @@ pub trait InBounds {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool;
 }
 
-pub trait Draggable {
-    fn drag(&mut self, to: &Point);
-}
-
 pub trait Drawable {
     fn draw(&self, ctx: &DrawCtx);
     fn prim_type(&self) -> PrimType;
 }
 
-pub trait DrawBounds: InBounds + Drawable + Draggable { }
-
 impl Drawable for Shape {
     fn draw(&self, ctx: &DrawCtx) {
+        ctx.prog_map[&self.prim_type()].set_used();
         let trans = self.transform(&ctx.viewport);
         let color = rgb_to_f32(&self.color);
         let ptype = self.prim_type();
@@ -434,14 +432,9 @@ impl InBounds for Shape {
     }
 }
 
-impl Draggable for Shape {
-    fn drag(&mut self, off: &Point) {
-        self.offset += *off;
-    }
-}
-
 impl Drawable for DrawLine {
     fn draw(&self, ctx: &DrawCtx) {
+        ctx.prog_map[&self.prim_type()].set_used();
         let p1c = pixels_to_trans_vec(&self.p1, &ctx.viewport);
         let p2c = pixels_to_trans_vec(&self.p2, &ctx.viewport);
         let color = rgb_to_f32(&self.color);
@@ -499,15 +492,7 @@ impl InBounds for DrawLine {
     }
 }
 
-impl Draggable for DrawLine {
-    fn drag(&mut self, off: &Point) {
-        self.p1 += *off;
-        self.p2 += *off;
-    }
-}
 
-impl DrawBounds for Shape {}
-impl DrawBounds for DrawLine {}
 
 pub struct DrawCtx<'a> {
     prim_map: PrimMap,
@@ -518,44 +503,6 @@ pub struct DrawCtx<'a> {
 impl<'a> DrawCtx<'a> {
     pub fn new(programs: &'a PrimPrograms, viewport: Point) -> DrawCtx<'a> {
         DrawCtx { prim_map: prim_map(), prog_map: prog_map(programs), viewport }
-    }
-}
-
-pub struct DrawList<'a> {
-    m: HashMap<u32, Box<DrawBounds + 'a>>,
-    draw_order: Vec<u32>,
-    next_id: u32
-}
-
-impl<'a> DrawList<'a> {
-    pub fn new() -> DrawList<'a> {
-        DrawList {m: HashMap::new(), draw_order: Vec::new(), next_id: 0}
-    }
-    pub fn add<D: DrawBounds + 'a>(&mut self, s: D) {
-        self.m.insert(self.next_id, Box::new(s));
-        self.draw_order.push(self.next_id);
-        self.next_id += 1;
-    }
-    pub fn get_mut(&mut self, id: u32) -> Option<&mut Box<DrawBounds +'a>> {
-        self.m.get_mut(&id)
-    }
-    pub fn click_shape(&mut self, p: &Point, vp: &Point) -> Option<u32> {
-        let shape_id = self.m.iter().find(|(_,s)| s.in_bounds(p, vp)).map(|(k,_)| *k);
-        if let Some(id) = shape_id {
-            let pos = self.draw_order.iter().position(|i| *i == id);
-            if let Some(pos) = pos {
-                let elem = self.draw_order.remove(pos as usize);
-                self.draw_order.push(elem);
-            }
-        }
-        shape_id
-    }
-    pub fn draw_all(&self, ctx: &DrawCtx) {
-        self.draw_order.iter().for_each(|idx| {
-            let s = &self.m[idx];
-            ctx.prog_map[&s.prim_type()].set_used();
-            s.draw(ctx);
-        });
     }
 }
 
@@ -618,7 +565,7 @@ impl ShapeBuilder {
         };
         self
     }
-    pub fn get(self) -> Shape { self.s }
+    pub fn get(self) -> Box<DrawBounds> { Box::new(self.s) }
 }
 
 fn rgb_to_f32(rgb: &(u8, u8, u8)) -> (f32, f32, f32) {
