@@ -126,17 +126,17 @@ impl<'a> ShapeBar<'a> {
         let circle = ShapeBuilder::new().circle(20).offset(left_margin, y_inc * 3).get();
         let line = LineBuilder::new().points(left_margin as f32, y_inc as f32 * 4., left_margin as f32 + 20., y_inc as f32 * 4.).get();
         let mut shapes = DrawList::new();
-        shapes.add(square);
-        shapes.add(tri);
-        shapes.add(circle);
-        shapes.add(line);
+        shapes.add(Box::new(square));
+        shapes.add(Box::new(tri));
+        shapes.add(Box::new(circle));
+        shapes.add(Box::new(line));
         ShapeBar { shapes }
     }
     pub fn get_draggable_id(&mut self, p: &Point, vp: &Point) -> Option<u32> {
         let shapebar_shape = self.shapes.m.iter().take(4).find(|(_,s)| s.in_bounds(p, vp)).map(|(k,_)| *k);
         if let Some(id) = shapebar_shape {
-            let s = self.shapes.m[&id];
-            //self.shapes.add(s.draw_clone());
+            let s = self.shapes.m[&id].draw_clone();
+            self.shapes.add(s);
         }
         None
     }

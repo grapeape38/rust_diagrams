@@ -7,7 +7,6 @@ use std::ffi::CString;
 use std::f32::{self, consts::PI};
 use PrimType as PT;
 use crate::render_gl::{Shader, Program};
-use crate::interface::DrawBounds;
 
 type PrimMap = HashMap<PrimType, GLuint>;
 
@@ -330,7 +329,7 @@ impl LineBuilder {
         self.l.line_width = width;
         self
     }
-    pub fn get(self) -> Box<DrawBounds> { Box::new(self.l) }
+    pub fn get(self) -> DrawLine { self.l }
 }
 
 struct ShapeTransform {
@@ -565,7 +564,7 @@ impl ShapeBuilder {
         };
         self
     }
-    pub fn get(self) -> Box<DrawBounds> { Box::new(self.s) }
+    pub fn get(self) -> Shape { self.s }
 }
 
 fn rgb_to_f32(rgb: &(u8, u8, u8)) -> (f32, f32, f32) {
