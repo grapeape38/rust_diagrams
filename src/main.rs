@@ -3,6 +3,7 @@ extern crate gl;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use std::time::{SystemTime, Duration};
 
 mod render_gl;
 mod primitives;
@@ -89,13 +90,17 @@ fn main() {
 
     let mut drag_state = DragState { drag_item: None, last_pt: Point{x:0.,y:0.} };
 
+    let mut timer = SystemTime::now();
     'main: loop {
         for event in event_pump.poll_iter() {
             match event {
                 ev @ Event::MouseMotion{..} | 
                 ev @ Event::MouseButtonDown{..} | 
                 ev @ Event::MouseButtonUp{..} => {
-                   drag_state.handle_mouse_event(&mut shapes, &ev, &VIEWPORT);
+                   if timer.elapsed().unwrap() >= Duration::from_millis(5) {
+                       drag_state.handle_mouse_event(&mut shapes, &ev, &VIEWPORT);
+                       timer = SystemTime::now();
+                   }
                 }
                 Event::Quit {..} | 
                 Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'main,
@@ -104,9 +109,7 @@ fn main() {
             unsafe {
                 gl::Clear(gl::COLOR_BUFFER_BIT);
             }
-
             shapes.draw_all(&draw_ctx);
-
             window.gl_swap_window();
         }
     }
@@ -135,7 +138,7 @@ impl DragState {
                 if let Some(id) = self.drag_item {
                     if let Some(shape) = shapes.get_mut(id) {
                         let off = Point{x: x as f32, y: y as f32};
-                        shape.drag(off - self.last_pt);
+                        shape.drag(&(off - self.last_pt));
                         self.last_pt = off;
                     }
                 }
