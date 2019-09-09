@@ -6,7 +6,9 @@ pub trait Draggable : Clickable {
 }
 
 pub trait Clickable {
-    fn click(&mut self) {}
+    fn click(&self, _: u32) -> Box<Fn(&mut DrawList) -> Option<u32>> {
+        Box::new(|_: &mut DrawList| { None })
+    }
 }
 
 pub trait DrawClone {
@@ -14,43 +16,10 @@ pub trait DrawClone {
 }
 
 impl<T: DrawBounds + Clone + 'static> DrawClone for T {
-    fn draw_clone(&self) -> Box<DrawBounds + 'static> {
+    fn draw_clone(&self) -> Box<DrawBounds> {
         Box::new(self.clone())
     }
 }
-
-/*impl<T: Drawable> Drawable for Box<T> { 
-    fn draw(&self, ctx: &DrawCtx) {
-        self.draw(ctx);
-    }
-    fn prim_type(&self) -> PrimType {
-        self.prim_type()
-    }
-}
-
-impl<T: Draggable> Clickable for Box<T> {
-    fn click(&mut self) {
-        self.click();
-    }
-}
-
-impl<T: Draggable> Draggable for Box<T> {
-    fn drag(&mut self, p: &Point) {
-        self.drag(p);
-    }
-}
-
-impl<T: InBounds> InBounds for Box<T> {
-    fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        self.in_bounds(p, vp)
-    }
-}*/
-
-/*impl <T: DrawClone + 'static> DrawClone for Box<T> {
-    fn draw_clone(&self) -> Box<DrawBounds + 'static> {
-        self.draw_clone();
-    }
-}*/
 
 pub trait DrawBounds : Draggable + Drawable + InBounds + DrawClone {}
 
@@ -92,17 +61,27 @@ impl<'a> DrawList<'a> {
     pub fn get_mut(&mut self, id: u32) -> Option<&mut Box<DrawBounds +'a>> {
         self.m.get_mut(&id)
     }
+    pub fn clone_shape(&mut self, id: u32) -> u32 {
+        let clone = self.m.get(&id).map(|s| s.draw_clone());
+        if let Some(c) = clone {
+            self.m.insert(self.next_id, c);
+            self.draw_order.push(self.next_id);
+            self.next_id += 1;
+        }
+        self.next_id - 1
+    }
     pub fn click_shape(&mut self, p: &Point, vp: &Point) -> Option<u32> {
         let shape_id = self.m.iter().find(|(_,s)| s.in_bounds(p, vp)).map(|(k,_)| *k);
-        if let Some(id) = shape_id {
-            self.get_mut(id).unwrap().click();
+        if let Some(mut id) = shape_id {
+            id = self.get_mut(id).unwrap().click(id)(self).unwrap_or(id);
             let pos = self.draw_order.iter().position(|i| *i == id);
             if let Some(pos) = pos {
                 let elem = self.draw_order.remove(pos as usize);
                 self.draw_order.push(elem);
             }
+            return Some(id);
         }
-        shape_id
+        None
     }
     pub fn draw_all(&self, ctx: &DrawCtx) {
         self.draw_order.iter().for_each(|idx| {
@@ -112,32 +91,65 @@ impl<'a> DrawList<'a> {
     }
 }
 
-
-pub struct ShapeBar<'a> {
-    shapes: DrawList<'a>
+pub struct ShapeCreator {
+    pub s: Box<DrawBounds>
 }
 
-impl<'a> ShapeBar<'a> {
-    fn new(viewport: &Point) -> ShapeBar<'a> {
-        let y_inc = viewport.y as i32 / 6;
-        let left_margin = viewport.x as i32 / 8;
-        let square = ShapeBuilder::new().square(20).offset(left_margin, y_inc * 2).get();
-        let tri = ShapeBuilder::new().tri(20).offset(left_margin, y_inc * 3).get();
-        let circle = ShapeBuilder::new().circle(20).offset(left_margin, y_inc * 3).get();
-        let line = LineBuilder::new().points(left_margin as f32, y_inc as f32 * 4., left_margin as f32 + 20., y_inc as f32 * 4.).get();
-        let mut shapes = DrawList::new();
-        shapes.add(Box::new(square));
-        shapes.add(Box::new(tri));
-        shapes.add(Box::new(circle));
-        shapes.add(Box::new(line));
-        ShapeBar { shapes }
+impl Clone for ShapeCreator {
+    fn clone(&self) -> Self {
+        ShapeCreator { s: self.s.draw_clone() }
     }
-    pub fn get_draggable_id(&mut self, p: &Point, vp: &Point) -> Option<u32> {
-        let shapebar_shape = self.shapes.m.iter().take(4).find(|(_,s)| s.in_bounds(p, vp)).map(|(k,_)| *k);
-        if let Some(id) = shapebar_shape {
-            let s = self.shapes.m[&id].draw_clone();
-            self.shapes.add(s);
-        }
-        None
+}
+
+impl Drawable for ShapeCreator {
+    fn draw(&self, ctx: &DrawCtx) {
+        self.s.draw(ctx);
     }
+    fn prim_type(&self) -> PrimType {
+        self.s.prim_type()
+    }
+}
+
+impl InBounds for ShapeCreator {
+    fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
+        self.s.in_bounds(p, vp)
+    }
+}
+
+impl Clickable for ShapeCreator {
+    fn click(&self, id: u32) -> Box<Fn(&mut DrawList) -> Option<u32>> {
+        Box::new(move |dl: &mut DrawList| {
+            Some(dl.clone_shape(id))
+        })
+    }
+}
+impl Draggable for ShapeCreator {
+    fn drag(&mut self, pt: &Point) {
+        self.s.drag(pt);
+    }
+}
+
+impl DrawBounds for ShapeCreator {}
+
+trait Creator {
+    fn creator(self) -> ShapeCreator;
+}
+
+impl<T: DrawBounds + Sized + 'static> Creator for T {
+    fn creator(self) -> ShapeCreator {
+        ShapeCreator { s: Box::new(self) }
+    }
+}
+
+pub fn create_shape_bar(dl: &mut DrawList, viewport: &Point) {
+    let y_inc = viewport.y as i32 / 6;
+    let left_margin = viewport.x as i32 / 8;
+    let square = ShapeBuilder::new().square(20).offset(left_margin, y_inc * 2).color(255, 0, 0).get().creator();
+    let tri = ShapeBuilder::new().tri(20).offset(left_margin, y_inc * 3).color(0, 255, 0).get().creator();
+    let circle = ShapeBuilder::new().circle(20).offset(left_margin, y_inc * 4).color(122, 15, 62).get().creator();
+    let line = LineBuilder::new().points(left_margin as f32, y_inc as f32 * 5., left_margin as f32 + 20., y_inc as f32 * 5.).color(45, 45, 200).get().creator();
+    dl.add(square);
+    dl.add(tri);
+    dl.add(circle);
+    dl.add(line);
 }
