@@ -95,9 +95,9 @@ pub struct ShapeCreator {
     pub s: Box<DrawBounds>
 }
 
-impl Clone for ShapeCreator {
-    fn clone(&self) -> Self {
-        ShapeCreator { s: self.s.draw_clone() }
+impl DrawClone for ShapeCreator {
+    fn draw_clone(&self) -> Box<DrawBounds> {
+        self.s.draw_clone()
     }
 }
 
@@ -123,11 +123,8 @@ impl Clickable for ShapeCreator {
         })
     }
 }
-impl Draggable for ShapeCreator {
-    fn drag(&mut self, pt: &Point) {
-        self.s.drag(pt);
-    }
-}
+
+impl Draggable for ShapeCreator {}
 
 impl DrawBounds for ShapeCreator {}
 
@@ -147,7 +144,7 @@ pub fn create_shape_bar(dl: &mut DrawList, viewport: &Point) {
     let square = ShapeBuilder::new().square(20).offset(left_margin, y_inc * 2).color(255, 0, 0).get().creator();
     let tri = ShapeBuilder::new().tri(20).offset(left_margin, y_inc * 3).color(0, 255, 0).get().creator();
     let circle = ShapeBuilder::new().circle(20).offset(left_margin, y_inc * 4).color(122, 15, 62).get().creator();
-    let line = LineBuilder::new().points(left_margin as f32, y_inc as f32 * 5., left_margin as f32 + 20., y_inc as f32 * 5.).color(45, 45, 200).get().creator();
+    let line = LineBuilder::new().points(left_margin as f32, y_inc as f32 * 5., left_margin as f32 + 20., y_inc as f32 * 5.).color(255, 255, 255).get().creator();
     dl.add(square);
     dl.add(tri);
     dl.add(circle);
