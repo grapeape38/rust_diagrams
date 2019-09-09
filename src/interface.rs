@@ -141,10 +141,11 @@ impl<T: DrawBounds + Sized + 'static> Creator for T {
 pub fn create_shape_bar(dl: &mut DrawList, viewport: &Point) {
     let y_inc = viewport.y as i32 / 6;
     let left_margin = viewport.x as i32 / 8;
-    let square = ShapeBuilder::new().square(20).offset(left_margin, y_inc * 2).color(255, 0, 0).get().creator();
-    let tri = ShapeBuilder::new().tri(20).offset(left_margin, y_inc * 3).color(0, 255, 0).get().creator();
-    let circle = ShapeBuilder::new().circle(20).offset(left_margin, y_inc * 4).color(122, 15, 62).get().creator();
-    let line = LineBuilder::new().points(left_margin as f32, y_inc as f32 * 5., left_margin as f32 + 20., y_inc as f32 * 5.).color(255, 255, 255).get().creator();
+    let square = ShapeBuilder::new().square(40).offset(left_margin, y_inc).color(255, 0, 0).get().creator();
+    let tri = ShapeBuilder::new().tri(40).offset(left_margin, y_inc * 2).color(0, 255, 0).get().creator();
+    let circle = ShapeBuilder::new().circle(40).offset(left_margin, y_inc * 3).color(122, 15, 62).get().creator();
+    let line = LineBuilder::new().points(left_margin as f32 - 20., y_inc as f32 * 4., left_margin as f32 + 20., y_inc as f32 * 4.)
+        .color(255, 255, 255).get().creator();
     dl.add(square);
     dl.add(tri);
     dl.add(circle);
