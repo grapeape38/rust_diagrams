@@ -3,7 +3,7 @@ extern crate gl;
 extern crate rand;
 
 use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
+use sdl2::keyboard::{Keycode};
 use std::time::{SystemTime, Duration};
 use rand::{Rng};
 
@@ -67,12 +67,12 @@ impl DrawList {
     }
     fn add_random_shapes(&mut self, vp: &Point, n: u8) {
         const MIN_DIM: u32 = 10;
-        let max_width = vp.x as u32 / 4;
-        let max_height = vp.y as u32 / 4;
+        let max_width = vp.x as u32 / 8;
+        let max_height = vp.y as u32 / 8;
         let rand_pt = || {
             let mut rng = rand::thread_rng(); 
-            let x = rng.gen_range(vp.x as i32 / 10, vp.x as i32 * 9 / 10);
-            let y = rng.gen_range(vp.y as i32 / 10, vp.y as i32 * 9 / 10);
+            let x = rng.gen_range(vp.x as i32 / 11, vp.x as i32 * 10 / 11);
+            let y = rng.gen_range(vp.y as i32 / 11, vp.y as i32 * 10 / 11);
             (x,y)
         };
         let rand_color = || {
@@ -116,7 +116,7 @@ fn main() {
     let video_subsystem = sdl.video().unwrap();
     const VIEWPORT: Point = Point{x:1100., y:700.};
     let window = video_subsystem
-        .window("Game", VIEWPORT.x as u32, VIEWPORT.y as u32)
+        .window("Shapes", VIEWPORT.x as u32, VIEWPORT.y as u32)
         .opengl()
         .resizable()
         .build()
@@ -146,17 +146,17 @@ fn main() {
 
     'main: loop {
         for event in event_pump.poll_iter() {
+            let kmod = sdl.keyboard().mod_state();
             match event {
                 ev @ Event::MouseMotion{..} => { 
                     if timer.elapsed().unwrap() >= Duration::from_millis(5) { //don't always handle mouse move
-                        app_state.handle_mouse_event(&ev);
+                        app_state.handle_mouse_event(&ev, &kmod);
                         timer = SystemTime::now();
                     }
                 }
                 ev @ Event::MouseButtonDown{..} | 
                 ev @ Event::MouseButtonUp{..} => { //always handle mouse down and up
-                    app_state.handle_mouse_event(&ev);
-                    timer = SystemTime::now();
+                    app_state.handle_mouse_event(&ev, &kmod);
                 }
                 Event::Quit {..} | 
                 Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'main,

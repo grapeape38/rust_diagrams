@@ -1,8 +1,8 @@
 extern crate sdl2;
 
 use std::collections::{HashMap, HashSet};
-use std::ops::{Deref, DerefMut};
 use sdl2::event::Event;
+use sdl2::keyboard::Mod;
 use crate::primitives::*;
 use crate::ShapeProps as SP;
 
@@ -99,7 +99,7 @@ pub struct AppState<'a> {
 pub enum DragMode {
     DragNone,
     SelectBox {start_pt: Point, last_pt: Point},
-    DragShapes { last_pt: Point, click_shape: u32, moved: bool },
+    DragShapes { last_pt: Point, click_shape: u32, clear_select: bool },
     DragResize
 }
 
@@ -112,22 +112,24 @@ impl<'a> AppState<'a> {
             draw_ctx
         }
     }
-    pub fn handle_mouse_event(&mut self, ev: &Event) {
+    pub fn handle_mouse_event(&mut self, ev: &Event, kmod: &Mod) {
         match *ev {
             Event::MouseButtonDown { mouse_btn, x, y, .. } => {
                 if mouse_btn == sdl2::mouse::MouseButton::Left {
                     let pt = Point{x: x as f32,y: y as f32};
+                    let clear_select = (*kmod & Mod::LCTRLMOD) == Mod::NOMOD;
                     if let Some(select_id) = self.draw_list.click_select_rect(&pt, &self.selection, &self.draw_ctx.viewport) {
-                        self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape: select_id, moved: false };
+                        self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape: select_id, clear_select };
                     }
                     else {
-                        self.selection.clear();
+                        if clear_select {
+                            self.selection.clear();
+                        }
                         if let Some(click_shape) = self.draw_list.click_shape(&pt, &self.draw_ctx.viewport) {
                             self.selection.insert(click_shape);
-                            self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape, moved: false };
+                            self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape, clear_select };
                         }
-                        else {
-                            self.selection.clear();
+                        else if clear_select {
                             self.drag_mode = DragMode::SelectBox{start_pt: pt, last_pt: pt};
                         }
                     }
@@ -136,8 +138,8 @@ impl<'a> AppState<'a> {
             Event::MouseButtonUp{mouse_btn, .. } => {
                 if mouse_btn == sdl2::mouse::MouseButton::Left {
                     match self.drag_mode {
-                        DragMode::DragShapes { click_shape, moved, .. } => {
-                            if !moved { 
+                        DragMode::DragShapes { click_shape, clear_select, .. } => {
+                            if clear_select { 
                                 self.selection.clear();
                                 self.selection.insert(click_shape);
                             }
@@ -150,8 +152,8 @@ impl<'a> AppState<'a> {
             Event::MouseMotion{ x, y, ..} => {
                 let pt = Point{x:x as f32, y:y as f32};
                 match self.drag_mode {
-                    DragMode::DragShapes { ref mut last_pt, ref mut moved, .. }=> {
-                        *moved = true;
+                    DragMode::DragShapes { ref mut last_pt, ref mut clear_select, .. }=> {
+                        *clear_select = false;
                         for id in self.selection.iter() {
                             self.draw_list.get_mut(id).map(|s| s.drag(&(pt - *last_pt)));
                         }

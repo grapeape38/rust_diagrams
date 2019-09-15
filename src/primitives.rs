@@ -195,6 +195,7 @@ pub struct Point {
     pub y: f32
 }
 
+#[allow(dead_code)]
 impl Point {
     pub fn new() -> Point {
         Point {x:0., y:0.}
@@ -295,7 +296,7 @@ impl Line {
         let inter = self.intersect(&l2).unwrap();
         p.dist(&inter)*/
         let (a,b,c) = (self.a, self.b, self.c);
-        (a*p.x + b*p.y + c) / f32::sqrt(a*a + b*b)
+        f32::abs(a*p.x + b*p.y + c) / f32::sqrt(a*a + b*b)
     }
 }
 
@@ -668,6 +669,7 @@ pub struct LineBuilder {
     l: DrawLine
 }
 
+#[allow(dead_code)]
 impl LineBuilder {
     pub fn new() -> LineBuilder {
         LineBuilder { s: Shape::default(), l: DrawLine::default() }
