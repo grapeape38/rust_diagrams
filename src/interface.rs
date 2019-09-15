@@ -70,10 +70,6 @@ impl DrawList {
     fn get_box_selection(&self, r: &Rect, vp: &Point) -> HashSet<u32> {
         self.m.iter().filter(|(_,s)| s.in_select_box(r, vp)).map(|(k, _)| *k).collect()
     }
-    /*pub fn send_msg(&mut self, ids: &Vec<u32>, msg: &EventMessage, vp: &Point) -> Vec<MessageResponse> {
-        //vec![MessageResponse::RespNone]
-        ids.iter().map(|id| self.m.get_mut(id).map_or(MessageResponse::RespNone, |s| s.message(msg, vp))).collect()
-    }*/
     pub fn draw_all(&self, ctx: &DrawCtx) {
         self.draw_order.iter().for_each(|idx| {
             let s = &self.m[idx];
@@ -162,13 +158,6 @@ impl<'a> AppState<'a> {
                     }
                     _ => {}
                 }
-                /*if let Some(id) = self.drag_item {
-                    if let Some(shape) = shapes.get_mut(id) {
-                        let off = Point{x: x as f32, y: y as f32};
-                        shape.drag(&(off - self.last_pt));
-                        self.last_pt = off;
-                    }
-                }*/
             }
             _ => {}
         }
@@ -216,31 +205,4 @@ impl<'a> ShapeBar<'a> {
         }
         None
     }
-}*/
-/*
-impl ReceiveMessage for Shape {
-    fn message(&mut self, msg: &EventMessage, vp: &Point) -> MessageResponse { 
-        match msg {
-            EventMessage::Select(click_pt) => { 
-                if self.in_bounds(&click_pt, vp) {
-                    return MessageResponse::Selected;
-                }
-            }
-            EventMessage::SelectBox(rect) => {
-                if self.verts(&vp).iter().any(|v| rect.in_bounds(v, vp)) {
-                    return MessageResponse::Selected; 
-                }
-                return MessageResponse::RespNone;
-            }
-            EventMessage::Drag(off) => {
-                self.offset.0 += *off;
-            }
-            EventMessage::DragResize(off) => {
-                self.width += off.x as u32;
-                self.height += off.y as u32;
-            }
-        };
-        MessageResponse::RespNone
-    }
-}
 }*/
