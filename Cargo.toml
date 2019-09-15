@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 gl = "0.13.0"
 nalgebra-glm = "0.4.2"
+rand = "0.7.1"
 
 [dependencies.sdl2]
 version = "0.32.2"

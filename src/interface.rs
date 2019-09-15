@@ -67,6 +67,16 @@ impl DrawList {
         None
     }
     #[inline]
+    fn get_select_rects(&self, selection: &HashSet<u32>, vp: &Point) -> Vec<(u32, Rect)> {
+        selection.iter().filter_map(|id| 
+            self.m.get(id).map(|s| 
+                (*id, Rect::bounding_box(&s.verts(vp))))
+        ).collect()
+    }
+    fn click_select_rect(&self, p: &Point, selection: &HashSet<u32>, vp: &Point) -> Option<u32> {
+        self.get_select_rects(selection, vp).iter().find(|(_, r)| r.in_bounds(p, vp)).map(|(id, _)| *id)
+    }
+    #[inline]
     fn get_box_selection(&self, r: &Rect, vp: &Point) -> HashSet<u32> {
         self.m.iter().filter(|(_,s)| s.in_select_box(r, vp)).map(|(k, _)| *k).collect()
     }
@@ -75,15 +85,6 @@ impl DrawList {
             let s = &self.m[idx];
             s.draw(ctx);
         });
-    }
-    pub fn draw_select_box(&self, rect: &Rect, ctx: &DrawCtx) {
-        rect.builder().fill(false).get().draw(ctx);
-    }
-    pub fn draw_shape_select_boxes(&self, selection: &HashSet<u32>, ctx: &DrawCtx) {
-        for s in selection.iter().filter_map(|id| self.m.get(id)) {
-            let rect = Rect::bounding_box(&s.verts(&ctx.viewport)).builder().color(255,255,255).fill(false).get();
-            rect.draw(ctx);
-        }
     }
 }
 
@@ -98,7 +99,7 @@ pub struct AppState<'a> {
 pub enum DragMode {
     DragNone,
     SelectBox {start_pt: Point, last_pt: Point},
-    DragShapes {start_pt: Point, last_pt: Point, click_shape: u32},
+    DragShapes { last_pt: Point, click_shape: u32, moved: bool },
     DragResize
 }
 
@@ -116,24 +117,27 @@ impl<'a> AppState<'a> {
             Event::MouseButtonDown { mouse_btn, x, y, .. } => {
                 if mouse_btn == sdl2::mouse::MouseButton::Left {
                     let pt = Point{x: x as f32,y: y as f32};
-                    if let Some(click_shape) = self.draw_list.click_shape(&pt, &self.draw_ctx.viewport) {
-                        if !self.selection.contains(&click_shape) {
-                            self.selection.clear();
-                            self.selection.insert(click_shape);
-                        }
-                        self.drag_mode = DragMode::DragShapes {start_pt: pt, last_pt: pt, click_shape };
+                    if let Some(select_id) = self.draw_list.click_select_rect(&pt, &self.selection, &self.draw_ctx.viewport) {
+                        self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape: select_id, moved: false };
                     }
                     else {
                         self.selection.clear();
-                        self.drag_mode = DragMode::SelectBox{start_pt: pt, last_pt: pt};
+                        if let Some(click_shape) = self.draw_list.click_shape(&pt, &self.draw_ctx.viewport) {
+                            self.selection.insert(click_shape);
+                            self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape, moved: false };
+                        }
+                        else {
+                            self.selection.clear();
+                            self.drag_mode = DragMode::SelectBox{start_pt: pt, last_pt: pt};
+                        }
                     }
                 }
             } 
             Event::MouseButtonUp{mouse_btn, .. } => {
                 if mouse_btn == sdl2::mouse::MouseButton::Left {
                     match self.drag_mode {
-                        DragMode::DragShapes {start_pt, last_pt, click_shape } => {
-                            if start_pt == last_pt {
+                        DragMode::DragShapes { click_shape, moved, .. } => {
+                            if !moved { 
                                 self.selection.clear();
                                 self.selection.insert(click_shape);
                             }
@@ -146,7 +150,8 @@ impl<'a> AppState<'a> {
             Event::MouseMotion{ x, y, ..} => {
                 let pt = Point{x:x as f32, y:y as f32};
                 match self.drag_mode {
-                    DragMode::DragShapes {ref mut last_pt, ..} => {
+                    DragMode::DragShapes { ref mut last_pt, ref mut moved, .. }=> {
+                        *moved = true;
                         for id in self.selection.iter() {
                             self.draw_list.get_mut(id).map(|s| s.drag(&(pt - *last_pt)));
                         }
@@ -162,13 +167,24 @@ impl<'a> AppState<'a> {
             _ => {}
         }
     }
+    fn draw_shapes(&self) {
+        self.draw_list.draw_all(&self.draw_ctx);
+    }
+    fn draw_select_box(&self) {
+        if let DragMode::SelectBox{start_pt, last_pt} = self.drag_mode {
+            Rect::new(start_pt, last_pt).builder().color(0,0,0).fill(false).get().draw(&self.draw_ctx);
+        }
+    }
+    fn draw_shape_select_boxes(&self) {
+        for (_, r) in self.draw_list.get_select_rects(&self.selection, &self.draw_ctx.viewport).iter() {
+            r.builder().color(255,255,255).fill(false).get().draw(&self.draw_ctx);
+        }
+    }
     pub fn render(&self) {
         unsafe { gl::Clear(gl::COLOR_BUFFER_BIT); }
-        self.draw_list.draw_all(&self.draw_ctx);
-        if let DragMode::SelectBox{start_pt, last_pt} = self.drag_mode {
-            self.draw_list.draw_select_box(&Rect::new(start_pt, last_pt), &self.draw_ctx);
-        }
-        self.draw_list.draw_shape_select_boxes(&self.selection, &self.draw_ctx);
+        self.draw_shapes();
+        self.draw_select_box();
+        self.draw_shape_select_boxes();
     }
 }
 
@@ -178,28 +194,3 @@ enum ClickResponse {
     NotClicked
 }
 
-/*pub struct ShapeBar<'a> {
-    shapes: DrawList<'a>
-}
-
-impl Clickable for ShapeCreator {
-    fn click(&self, id: u32) -> Box<Fn(&mut DrawList) -> Option<u32>> {
-        Box::new(move |dl: &mut DrawList| {
-            Some(dl.clone_shape(id))
-        })
-    }
-}
-
-impl Draggable for ShapeCreator {}
-
-impl DrawBounds for ShapeCreator {}
-
-trait Creator {
-    fn creator(self) -> ShapeCreator;
-}
-
-impl<T: DrawBounds + Sized + 'static> Creator for T {
-    fn creator(self) -> ShapeCreator {
-        ShapeCreator { s: Box::new(self) }
-    }
-}*/
