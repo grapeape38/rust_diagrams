@@ -182,27 +182,24 @@ enum ClickResponse {
     shapes: DrawList<'a>
 }
 
-impl<'a> ShapeBar<'a> {
-    fn new(viewport: &Point) -> ShapeBar<'a> {
-        let y_inc = viewport.y as i32 / 6;
-        let left_margin = viewport.x as i32 / 8;
-        let square = ShapeBuilder::new().square(20).offset(left_margin, y_inc * 2).get();
-        let tri = ShapeBuilder::new().tri(20).offset(left_margin, y_inc * 3).get();
-        let circle = ShapeBuilder::new().circle(20).offset(left_margin, y_inc * 3).get();
-        let line = LineBuilder::new().points(left_margin as f32, y_inc as f32 * 4., left_margin as f32 + 20., y_inc as f32 * 4.).get();
-        let mut shapes = DrawList::new();
-        shapes.add(Box::new(square));
-        shapes.add(Box::new(tri));
-        shapes.add(Box::new(circle));
-        shapes.add(Box::new(line));
-        ShapeBar { shapes }
+impl Clickable for ShapeCreator {
+    fn click(&self, id: u32) -> Box<Fn(&mut DrawList) -> Option<u32>> {
+        Box::new(move |dl: &mut DrawList| {
+            Some(dl.clone_shape(id))
+        })
     }
-    pub fn get_draggable_id(&mut self, p: &Point, vp: &Point) -> Option<u32> {
-        let shapebar_shape = self.shapes.m.iter().take(4).find(|(_,s)| s.in_bounds(p, vp)).map(|(k,_)| *k);
-        if let Some(id) = shapebar_shape {
-            let s = self.shapes.m[&id].draw_clone();
-            self.shapes.add(s);
-        }
-        None
+}
+
+impl Draggable for ShapeCreator {}
+
+impl DrawBounds for ShapeCreator {}
+
+trait Creator {
+    fn creator(self) -> ShapeCreator;
+}
+
+impl<T: DrawBounds + Sized + 'static> Creator for T {
+    fn creator(self) -> ShapeCreator {
+        ShapeCreator { s: Box::new(self) }
     }
 }*/
