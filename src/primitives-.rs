@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::f32::{self, consts::PI};
 use PrimType as PT;
-use ShapeProps as SP;
 use crate::render_gl::{Shader, Program};
 
 type PrimMap = HashMap<PrimType, GLuint>;
@@ -116,7 +115,7 @@ impl PrimType {
             PT::Triangle => gl::TRIANGLES,
             PT::Rect => gl::QUADS,
             PT::Circle => gl::TRIANGLE_FAN,
-            PT::Line => gl::POINTS
+            PT::Line => gl::LINES
         }
     }
     fn size(&self) -> usize {
@@ -196,7 +195,7 @@ pub struct Point {
 }
 
 impl Point {
-    pub fn new() -> Point {
+    fn new() -> Point {
         Point {x:0., y:0.}
     }
     fn mag(&self) -> f32 {
@@ -250,13 +249,6 @@ impl std::ops::MulAssign for Point {
     }
 }
 
-impl std::ops::Div<f32> for Point {
-    type Output = Point;
-    fn div(self, rhs: f32) -> Self {
-        Point {x: self.x / rhs, y: self.y / rhs}
-    }
-}
-
 #[derive(Debug)]
 pub struct Line {
     a: f32, b: f32, c: f32 
@@ -301,64 +293,76 @@ impl Line {
 
 #[derive(Clone)]
 pub struct DrawLine {
-    pub p1: Point, 
+    pub p1: Point,
     pub p2: Point,
-    pub line_width: f32,
+    color: (u8, u8, u8),
+    line_width: f32
 }
 
-impl Default for DrawLine {
-    fn default() -> DrawLine {
+impl DrawLine {
+    pub fn new() -> DrawLine {
         DrawLine {
             p1: Point::new(),
             p2: Point::new(),
+            color: (0, 0, 0),
             line_width: 3.
         }
     }
 }
 
-#[derive(Clone)]
-pub struct DrawPolygon {
-    prim: PrimType,
-    pub fill: bool,
-    pub offset: (Point, usize),
-    pub width: u32,
-    pub height: u32,
-    pub rot: f32,
+pub struct LineBuilder {
+    l: DrawLine
 }
 
-impl Default for DrawPolygon {
-    fn default() -> Self {
-        DrawPolygon {
-            prim: PT::Triangle,
-            offset: (Point::new(), 0),
-            fill: true,
-            width: 5,
-            height: 5,
-            rot: 0.,
-        }
+impl LineBuilder {
+    pub fn new() -> LineBuilder {
+        LineBuilder { l: DrawLine::new() }
     }
+    pub fn points(mut self, x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
+        self.l.p1 = Point {x: x1, y: y1};
+        self.l.p2 = Point {x: x2, y: y2};
+        self
+    }
+    pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
+        self.l.color = (r,g,b);
+        self
+    }
+    pub fn line_width(mut self, width: f32) -> Self {
+        self.l.line_width = width;
+        self
+    }
+    pub fn get(self) -> DrawLine { self.l }
 }
 
-struct PolyTransform {
+struct ShapeTransform {
     translation: glm::Mat3,
     rotation: glm::Mat3,
     scale: glm::Mat3
 }
 
 #[allow(dead_code)]
-impl PolyTransform {
-    fn new(s: &DrawPolygon, vp: &Point) -> Self {
+impl ShapeTransform {
+    fn new(s: &Shape, vp: &Point) -> ShapeTransform {
         let sc = Point{ 
           x: 2. * s.width as f32 / vp.x,
           y: 2. * s.height as f32 / vp.y
         };
-        //let mut off_pt = coords_to_pixels(&(s.prim.offset_from_internal(s.offset.1) * sc), vp) - coords_to_pixels(&Point::new(), vp);
-        let mut off_pt = Point::new();
+        let mut off_pt = coords_to_pixels(&(s.prim.offset_from_internal(s.offset.1) * sc), vp) - coords_to_pixels(&Point::new(), vp);
         off_pt += s.offset.0;
-        PolyTransform { 
+        ShapeTransform { 
             translation: glm::translate2d(&glm::identity(), &pixels_to_trans_vec(&off_pt, vp)),
             rotation: glm::rotate2d(&glm::identity(), 180. * s.rot / PI),
             scale: glm::scale2d(&glm::identity(), &glm::vec2(sc.x, sc.y))
+        }
+    }
+    fn send_uniforms(&self, prog_id: GLuint) {
+        unsafe {
+            let trans_loc = gl::GetUniformLocation(prog_id, GChar::new("translate").ptr());
+            gl::UniformMatrix3fv(trans_loc, 1, gl::FALSE, self.translation.as_ptr());
+            let rot_loc = gl::GetUniformLocation(prog_id, GChar::new("rotation").ptr());
+            gl::UniformMatrix3fv(rot_loc, 1, gl::FALSE, self.rotation.as_ptr());
+            let scale_loc = gl::GetUniformLocation(prog_id, GChar::new("scale").ptr());
+            gl::UniformMatrix3fv(scale_loc, 1, gl::FALSE, self.scale.as_ptr());
         }
     }
     fn get(&self) -> glm::Mat3 {
@@ -369,80 +373,122 @@ impl PolyTransform {
     }
 }
 
-struct LineTransform {
-    p1c: glm::Vec2, p2c: glm::Vec2
+pub enum ShapeProps {
+    Line {p1: Point, p2: Point},
+    Polygon {
+        prim: PrimType,
+        offset: (Point, usize),
+        width: u32,
+        height: u32,
+        rot: f32,
+    }
 }
 
-impl LineTransform {
-    fn new(l: &DrawLine, vp: &Point) -> Self {
-        LineTransform {
-            p1c: pixels_to_trans_vec(&l.p1, vp),
-            p2c: pixels_to_trans_vec(&l.p2, vp)
+#[derive(Clone)]
+pub struct Shape {
+    prim: PrimType,
+    pub offset: (Point, usize),
+    pub width: u32,
+    pub height: u32,
+    pub rot: f32,
+    line_width: f32,
+    color: (u8, u8, u8), //rgb
+}
+
+impl Shape {
+    pub fn new() -> Shape {
+        Shape {
+            prim: PT::Triangle,
+            offset: (Point::new(), 0),
+            width: 5,
+            height: 5,
+            rot: 0.,
+            line_width: 3.,
+            color: (0, 0, 0)
         }
     }
-}
-
-trait Transform {
-    unsafe fn send_uniforms(&self, prog_id: GLuint); 
-}
-
-impl Transform for PolyTransform {
-    unsafe fn send_uniforms(&self, prog_id: GLuint) {
-        let trans_loc = gl::GetUniformLocation(prog_id, GChar::new("translate").ptr());
-        gl::UniformMatrix3fv(trans_loc, 1, gl::FALSE, self.translation.as_ptr());
-        let rot_loc = gl::GetUniformLocation(prog_id, GChar::new("rotation").ptr());
-        gl::UniformMatrix3fv(rot_loc, 1, gl::FALSE, self.rotation.as_ptr());
-        let scale_loc = gl::GetUniformLocation(prog_id, GChar::new("scale").ptr());
-        gl::UniformMatrix3fv(scale_loc, 1, gl::FALSE, self.scale.as_ptr());
+    pub fn verts(&self, vp: &Point) -> Vec<Point> {
+        let trans = self.transform(vp).get();
+        self.prim.verts().chunks(2).map(|s| { 
+            let v = trans * glm::vec3(s[0], s[1], 1.0);
+            Point {x: v[0], y: v[1]}
+        }).collect()
     }
-}
-
-impl Transform for LineTransform {
-    unsafe fn send_uniforms(&self, prog_id: GLuint) {
-        let p1_loc = gl::GetUniformLocation(prog_id, GChar::new("point1").ptr());
-        gl::Uniform2f(p1_loc, self.p1c.x, self.p1c.y);
-        let p2_loc = gl::GetUniformLocation(prog_id, GChar::new("point2").ptr());
-        gl::Uniform2f(p2_loc, self.p2c.x, self.p2c.y);
+    fn transform(&self, vp: &Point) -> ShapeTransform {
+        ShapeTransform::new(self, vp)
     }
+    fn mode(&self) -> GLenum { self.prim.mode() }
+    fn size(&self) -> GLint { self.prim.size() as GLint }
 }
 
 pub trait InBounds {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool;
 }
 
+pub trait Drawable {
+    fn draw(&self, ctx: &DrawCtx);
+    fn prim_type(&self) -> PrimType;
+}
+
+impl Drawable for Shape {
+    fn draw(&self, ctx: &DrawCtx) {
+        ctx.prog_map[&self.prim_type()].set_used();
+        let trans = self.transform(&ctx.viewport);
+        let color = rgb_to_f32(&self.color);
+        let ptype = self.prim_type();
+        let prog_id = ctx.prog_map[&ptype].id();
+        let vao = ctx.prim_map[&ptype];
+        unsafe {
+            trans.send_uniforms(prog_id);
+            let color_loc = gl::GetUniformLocation(prog_id, GChar::new("color").ptr());
+            gl::Uniform4f(color_loc, color.0, color.1, color.2, 1.0);
+            gl::LineWidth(self.line_width as GLfloat);
+            gl::BindVertexArray(vao);
+            gl::DrawArrays(self.mode(), 0, self.size());
+        }
+    }
+    fn prim_type(&self) -> PrimType {
+        self.prim
+    }
+}
+
+impl InBounds for Shape {
+     fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
+        let trans_inv = self.transform(vp).inv();
+        let pc = pixels_to_trans_vec(p, vp);
+        let normpt = trans_inv * glm::vec3(pc.x, pc.y, 1.0);
+        self.prim.in_bounds(&Point {x: normpt.x, y: normpt.y})
+    }
+}
+
+impl Drawable for DrawLine {
+    fn draw(&self, ctx: &DrawCtx) {
+        ctx.prog_map[&self.prim_type()].set_used();
+        let p1c = pixels_to_trans_vec(&self.p1, &ctx.viewport);
+        let p2c = pixels_to_trans_vec(&self.p2, &ctx.viewport);
+        let color = rgb_to_f32(&self.color);
+        let prog_id = ctx.prog_map[&self.prim_type()].id();
+        let vao = ctx.prim_map[&self.prim_type()];
+        unsafe {
+            let color_loc = gl::GetUniformLocation(prog_id, GChar::new("color").ptr());
+            gl::Uniform4f(color_loc, color.0, color.1, color.2, 1.0);
+            let point1_loc = gl::GetUniformLocation(prog_id, GChar::new("point1").ptr());
+            let point2_loc = gl::GetUniformLocation(prog_id, GChar::new("point2").ptr());
+            gl::Uniform2f(point1_loc, p1c.x, p1c.y);
+            gl::Uniform2f(point2_loc, p2c.x, p2c.y);
+            gl::LineWidth(self.line_width as GLfloat);
+            gl::BindVertexArray(vao);
+            gl::DrawArrays(gl::POINTS, 0, 1);
+        }
+    }
+    fn prim_type(&self) -> PrimType {
+        PT::Line
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct Rect {
     c1: Point, c2: Point
-}
-
-impl Rect {
-    pub fn new(c1: Point, c2: Point) -> Self {
-        Rect { c1, c2 }
-    }
-    pub fn bounding_box(pts: &Vec<Point>) -> Self {
-        if pts.is_empty() { return Rect{c1: Point::new(), c2: Point::new()} }
-        let mut min_pt = pts[0]; let mut max_pt = min_pt;
-        for p in pts {
-            if p.x < min_pt.x { min_pt.x = p.x };
-            if p.x > max_pt.x { max_pt.x = p.x };
-            if p.y < min_pt.y { min_pt.y = p.y };
-            if p.y > max_pt.y { max_pt.y = p.y };
-        }
-        Rect::new(min_pt, max_pt)
-    }
-    pub fn builder(&self) -> ShapeBuilder {
-        let center = self.center();
-        ShapeBuilder::new().rect(self.width() as u32, self.height() as u32).offset(center.x as i32, center.y as i32)
-    }
-    fn center(&self) -> Point {
-        (self.c1 + self.c2) / 2.
-    }
-    pub fn width(&self) -> f32 {
-        f32::abs(self.c2.x - self.c1.x)
-    }
-    pub fn height(&self) -> f32 {
-        f32::abs(self.c2.y - self.c1.y)
-    }
 }
 
 impl InBounds for Rect {
@@ -455,17 +501,8 @@ impl InBounds for Rect {
     }
 }
 
-impl InBounds for DrawPolygon {
-    fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        let trans_inv = PolyTransform::new(self, vp).inv();
-        let pc = pixels_to_trans_vec(p, vp);
-        let normpt = trans_inv * glm::vec3(pc.x, pc.y, 1.0);
-        self.prim.in_bounds(&Point {x: normpt.x, y: normpt.y})
-    }
-}
-
 impl InBounds for DrawLine {
-     fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
+    fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
         let mut c1 = self.p1;
         let mut c2 = self.p2;
         if c1.x == c2.x {
@@ -485,109 +522,12 @@ impl InBounds for DrawLine {
     }
 }
 
-#[derive(Clone)]
-pub enum ShapeProps {
-    Line(DrawLine),
-    Polygon(DrawPolygon)
-}
 
-#[derive(Clone)]
-pub struct Shape {
-    pub props: ShapeProps,
-    pub color: (u8, u8, u8), //rgb
-    pub alpha: f32
-}
-
-impl Default for Shape {
-    fn default() -> Self {
-        Shape {
-            props: ShapeProps::Polygon(DrawPolygon::default()),
-            color: (0,0,0),
-            alpha: 1.0
-        }
-    }
-}
-
-impl Shape {
-    pub fn verts(&self, vp: &Point) -> Vec<Point> {
-        match &self.props {
-            SP::Polygon(ref draw_poly) => {
-                let trans = PolyTransform::new(&draw_poly, vp).get();
-                let v = self.prim_type().verts().chunks(2).map(|s| { 
-                    let v = trans * glm::vec3(s[0], s[1], 1.0);
-                    coords_to_pixels(&Point{x:v[0],y:v[1]}, vp)
-                }).collect();
-                v
-            }
-            SP::Line(draw_line) => {
-                vec![draw_line.p1, draw_line.p2]
-            }
-        }
-    }
-    fn transform(&self, vp: &Point) -> Box<dyn Transform> {
-        match &self.props {
-            SP::Polygon(draw_poly) => Box::new(PolyTransform::new(&draw_poly, vp)),
-            SP::Line(draw_line) => Box::new(LineTransform::new(&draw_line, vp))
-        }
-    }
-    pub fn draw(&self, ctx: &DrawCtx) {
-        ctx.prog_map[&self.prim_type()].set_used();
-        let trans = self.transform(&ctx.viewport);
-        let color = rgb_to_f32(&self.color);
-        let ptype = self.prim_type();
-        let prog_id = ctx.prog_map[&ptype].id();
-        let vao = ctx.prim_map[&ptype];
-        let line_width = if let SP::Line(ref draw_line) = self.props { draw_line.line_width } else { 3. };
-        if let SP::Polygon(ref draw_poly) = self.props {
-            let poly_mode: GLuint = match draw_poly.fill {
-                true => gl::FILL,
-                false => gl::LINE
-            };
-            unsafe { gl::PolygonMode(gl::FRONT_AND_BACK, poly_mode); }
-        }
-        unsafe {
-            trans.send_uniforms(prog_id);
-            let color_loc = gl::GetUniformLocation(prog_id, GChar::new("color").ptr());
-            gl::Uniform4f(color_loc, color.0, color.1, color.2, self.alpha);
-            gl::LineWidth(line_width as GLfloat);
-            gl::BindVertexArray(vao);
-            gl::DrawArrays(self.mode(), 0, self.size());
-        }
-    }
-    /*pub fn get_offset(&self, vp: &Point) -> Point {
-        match &self.props {
-            SP::Polygon(draw_poly) => {
-                draw_poly.offset.0
-            }
-            SP::Line(draw_line) => {
-                let mp = (draw_line.p1 + draw_line.p2) / 2.;
-                pixels_to_coords(&mp, vp)
-            }
-        }
-    }*/
-    pub fn prim_type(&self) -> PrimType {
-        match &self.props {
-            SP::Polygon(draw_poly) => draw_poly.prim,
-            SP::Line(_) => PT::Line
-        }
-    }
-    fn mode(&self) -> GLenum { self.prim_type().mode() }
-    fn size(&self) -> GLint { self.prim_type().size() as GLint }
-}
-
-impl InBounds for Shape {
-    fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        match &self.props {
-            SP::Polygon(draw_poly) => draw_poly.in_bounds(p,vp),
-            SP::Line(draw_line) => draw_line.in_bounds(p,vp)
-        }
-    }
-}
 
 pub struct DrawCtx<'a> {
     prim_map: PrimMap,
     prog_map: ProgMap<'a>,
-    pub viewport: Point,
+    viewport: Point,
 }
 
 impl<'a> DrawCtx<'a> {
@@ -598,98 +538,64 @@ impl<'a> DrawCtx<'a> {
 
 pub struct ShapeBuilder {
     s: Shape,
-    p: DrawPolygon
 }
 
 #[allow(dead_code)]
 impl ShapeBuilder {
     pub fn new() -> ShapeBuilder {
-        ShapeBuilder { s: Shape::default(), p: DrawPolygon::default() }
+        ShapeBuilder { s: Shape::new() }
     }
     pub fn offset_from(mut self, x: i32, y: i32, i: usize) -> Self {
-        self.p.offset = (Point {x: x as f32,y: y as f32}, i);
+        self.s.offset = (Point {x: x as f32,y: y as f32}, i);
         self
     }
     pub fn offset(mut self, x: i32, y: i32) -> Self {
-        self.p.offset = (Point {x: x as f32,y: y as f32}, 0);
+        self.s.offset = (Point {x: x as f32,y: y as f32}, 0);
         self
     }
     pub fn rot(mut self, rot: f32) -> ShapeBuilder {
-        self.p.rot = rot;
+        self.s.rot = rot;
         self
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
         self.s.color = (r,g,b);
-        self
-    }
-    pub fn alpha(mut self, a: f32) -> Self {
-        self.s.alpha = a;
-        self
-    }
-    pub fn circle(mut self, rad: u32) -> Self {
-        self.p.prim = PT::Circle;
-        self.p.width = rad;
-        self.p.height = rad;
-        self
-    }
-    pub fn ellipse(mut self, rad_x: u32, rad_y: u32) -> Self {
-        self.p.prim = PT::Circle;
-        self.p.width = rad_x;
-        self.p.height = rad_y;
-        self
-    }
-    pub fn rect(mut self, width: u32, height: u32) -> Self {
-        self.p.prim = PT::Rect;
-        self.p.width = width;
-        self.p.height = height;
-        self
-    }
-    pub fn square(mut self, side: u32) -> Self {
-        self.p.prim = PT::Rect;
-        self.p.width = side;
-        self.p.height = side;
-        self
-    }
-    pub fn tri(mut self, base: u32, height: u32) -> Self {
-        self.p.prim = PT::Triangle;
-        self.p.width = base;
-        self.p.height = height;
-        self
-    }
-    pub fn fill(mut self, fill: bool) -> Self {
-        self.p.fill = fill;
-        self
-    }
-    pub fn get(mut self) -> Shape { self.s.props = SP::Polygon(self.p); self.s }
-}
-
-pub struct LineBuilder {
-    s: Shape,
-    l: DrawLine
-}
-
-impl LineBuilder {
-    pub fn new() -> LineBuilder {
-        LineBuilder { s: Shape::default(), l: DrawLine::default() }
-    }
-    pub fn points(mut self, x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
-        self.l.p1 = Point {x: x1, y: y1};
-        self.l.p2 = Point {x: x2, y: y2};
-        self
-    }
-    pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
-        self.s.color = (r,g,b);
-        self
-    }
-    pub fn alpha(mut self, a: f32) -> Self {
-        self.s.alpha = a;
         self
     }
     pub fn line_width(mut self, width: f32) -> Self {
-        self.l.line_width = width;
+        self.s.line_width = width;
         self
     }
-    pub fn get(mut self) -> Shape { self.s.props = SP::Line(self.l); self.s }
+    pub fn circle(mut self, rad: u32) -> Self {
+        self.s.prim = PT::Circle;
+        self.s.width = rad;
+        self.s.height = rad;
+        self
+    }
+    pub fn ellipse(mut self, rad_x: u32, rad_y: u32) -> Self {
+        self.s.prim = PT::Circle;
+        self.s.width = rad_x;
+        self.s.height = rad_y;
+        self
+    }
+    pub fn rect(mut self, width: u32, height: u32) -> Self {
+        self.s.prim = PT::Rect;
+        self.s.width = width;
+        self.s.height = height;
+        self
+    }
+    pub fn square(mut self, side: u32) -> Self {
+        self.s.prim = PT::Rect;
+        self.s.width = side;
+        self.s.height = side;
+        self
+    }
+    pub fn tri(mut self, base: u32, height: u32) -> Self {
+        self.s.prim = PT::Triangle;
+        self.s.width = base;
+        self.s.height = height;
+        self
+    }
+    pub fn get(self) -> Shape { self.s }
 }
 
 fn rgb_to_f32(rgb: &(u8, u8, u8)) -> (f32, f32, f32) {

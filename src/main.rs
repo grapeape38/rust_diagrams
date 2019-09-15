@@ -8,7 +8,7 @@ use std::time::{SystemTime, Duration};
 mod interface;
 mod render_gl;
 mod primitives;
-use interface::DrawList;
+use interface::{AppState, DrawList};
 use primitives::{*};
 
 fn main() {
@@ -40,57 +40,57 @@ fn main() {
     
     let mut shapes = DrawList::new();
 
-    shapes.add(Box::new(ShapeBuilder::new() 
-        .tri(100)
+    shapes.add(ShapeBuilder::new() 
+        .tri(100, 100)
         .offset(200,200)
-        .color(0, 255, 0).get())
+        .color(0, 255, 0).get()
     );
-    shapes.add(Box::new(ShapeBuilder::new() 
+    shapes.add(ShapeBuilder::new() 
         .rect(200, 100)
         .offset(400,200)
         .rot(45.)
-        .color(0, 0, 255).get())
+        .color(0, 0, 255).get()
     );
-    shapes.add(Box::new(ShapeBuilder::new()
+    shapes.add(ShapeBuilder::new()
         .circle(100)
         .offset(200,400)
-        .color(255, 0, 255).get())
+        .color(255, 0, 255).get()
     );
-    shapes.add(Box::new(ShapeBuilder::new() 
+    shapes.add(ShapeBuilder::new() 
         .ellipse(200, 100)
         .offset(400,400)
-        .color(255, 255, 0).get())
+        .color(255, 255, 0).get()
     );
 
-    shapes.add(Box::new(ShapeBuilder::new() 
+    shapes.add(ShapeBuilder::new() 
         .square(200)
         .offset(600,600)
-        .color(255, 255, 255).get())
+        .color(255, 255, 255).get()
     );
 
-    shapes.add(Box::new(ShapeBuilder::new()
+    shapes.add(ShapeBuilder::new()
         .square(150)
         .rot(45.)
         .color(200,100,200)
-        .offset(600,200).get())
+        .offset(600,200).get()
     );
 
-    shapes.add(Box::new(LineBuilder::new()
+    shapes.add(LineBuilder::new()
         .points(200.,200.,400.,400.)
-        .color(0, 255, 255).line_width(6.).get())
+        .color(0, 255, 255).line_width(6.).get()
     );
 
-    shapes.add(Box::new(LineBuilder::new()
+    shapes.add(LineBuilder::new()
         .points(834.,338.,1000.,450.)
-        .color(255, 255, 255).get())
+        .color(255, 255, 255).get()
     );
 
-    shapes.add(Box::new(LineBuilder::new()
+    shapes.add(LineBuilder::new()
         .points(400.,200.,400.,400.)
-        .color(255, 0, 0).get())
+        .color(255, 0, 0).get()
     );
-
-    let mut drag_state = DragState { drag_item: None, last_pt: Point{x:0.,y:0.} };
+    
+    let mut app_state = AppState::new(shapes, draw_ctx);
 
     let mut timer = SystemTime::now();
     'main: loop {
@@ -100,7 +100,7 @@ fn main() {
                 ev @ Event::MouseButtonDown{..} | 
                 ev @ Event::MouseButtonUp{..} => {
                    if timer.elapsed().unwrap() >= Duration::from_millis(5) {
-                       drag_state.handle_mouse_event(&mut shapes, &ev, &VIEWPORT);
+                       app_state.handle_mouse_event(&ev);
                        timer = SystemTime::now();
                    }
                 }
@@ -108,44 +108,8 @@ fn main() {
                 Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'main,
                 _ => {},
             }
-            unsafe {
-                gl::Clear(gl::COLOR_BUFFER_BIT);
-            }
-            shapes.draw_all(&draw_ctx);
+            app_state.render();
             window.gl_swap_window();
-        }
-    }
-}
-
-struct DragState {
-    drag_item: Option<u32>,
-    last_pt: Point
-}
-
-impl DragState {
-    fn handle_mouse_event(&mut self, shapes: &mut DrawList, ev: &Event, vp: &Point) {
-        match *ev {
-            Event::MouseButtonDown { mouse_btn, x, y, .. } => {
-                if self.drag_item.is_none() && mouse_btn == sdl2::mouse::MouseButton::Left {
-                    self.last_pt = Point{x: x as f32,y: y as f32};
-                    self.drag_item = shapes.click_shape(&self.last_pt, vp); 
-                }
-            } 
-            Event::MouseButtonUp{mouse_btn, .. } => {
-                if mouse_btn == sdl2::mouse::MouseButton::Left {
-                    self.drag_item = None
-                }
-            }
-            Event::MouseMotion{ x, y, ..} => {
-                if let Some(id) = self.drag_item {
-                    if let Some(shape) = shapes.get_mut(id) {
-                        let off = Point{x: x as f32, y: y as f32};
-                        shape.drag(&(off - self.last_pt));
-                        self.last_pt = off;
-                    }
-                }
-            }
-            _ => {}
         }
     }
 }
