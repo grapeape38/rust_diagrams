@@ -413,7 +413,7 @@ pub trait InBounds {
 
 #[derive(Copy, Clone)]
 pub struct Rect {
-    c1: Point, c2: Point
+    pub c1: Point, pub c2: Point
 }
 
 impl Rect {
@@ -694,7 +694,7 @@ impl LineBuilder {
     pub fn get(mut self) -> Shape { self.s.props = SP::Line(self.l); self.s }
 }
 
-fn rgb_to_f32(rgb: &(u8, u8, u8)) -> (f32, f32, f32) {
+pub fn rgb_to_f32(rgb: &(u8, u8, u8)) -> (f32, f32, f32) {
     (rgb.0 as f32 / 255., rgb.1 as f32 / 255., rgb.2 as f32 / 255.)
 }
 

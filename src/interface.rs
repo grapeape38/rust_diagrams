@@ -1,10 +1,18 @@
 extern crate sdl2;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use sdl2::event::Event;
 use sdl2::keyboard::Mod;
+use std::iter::FromIterator;
 use crate::primitives::*;
 use crate::ShapeProps as SP;
+
+impl Rect {
+    fn drag(&mut self, off: &Point) {
+        self.c1 += *off;
+        self.c2 += *off;
+    }
+}
 
 impl Shape {
     fn drag(&mut self, off: &Point) {
@@ -52,6 +60,9 @@ impl DrawList {
         self.draw_order.push(self.next_id);
         self.next_id += 1;
     }
+    fn get(&self, id: &u32) -> Option<&Shape> {
+        self.m.get(id)
+    }
     fn get_mut(&mut self, id: &u32) -> Option<&mut Shape> {
         self.m.get_mut(id)
     }
@@ -67,18 +78,8 @@ impl DrawList {
         None
     }
     #[inline]
-    fn get_select_rects(&self, selection: &HashSet<u32>, vp: &Point) -> Vec<(u32, Rect)> {
-        selection.iter().filter_map(|id| 
-            self.m.get(id).map(|s| 
-                (*id, Rect::bounding_box(&s.verts(vp))))
-        ).collect()
-    }
-    fn click_select_rect(&self, p: &Point, selection: &HashSet<u32>, vp: &Point) -> Option<u32> {
-        self.get_select_rects(selection, vp).iter().find(|(_, r)| r.in_bounds(p, vp)).map(|(id, _)| *id)
-    }
-    #[inline]
-    fn get_box_selection(&self, r: &Rect, vp: &Point) -> HashSet<u32> {
-        self.m.iter().filter(|(_,s)| s.in_select_box(r, vp)).map(|(k, _)| *k).collect()
+    fn get_box_selection(&self, r: &Rect, vp: &Point) -> Vec<(u32, &Shape)> {
+        self.m.iter().filter(|(_,s)| s.in_select_box(r, vp)).map(|(id, s)| (*id,s)).collect()
     }
     pub fn draw_all(&self, ctx: &DrawCtx) {
         self.draw_order.iter().for_each(|idx| {
@@ -90,7 +91,7 @@ impl DrawList {
 
 pub struct AppState<'a> {
     draw_list: DrawList,
-    selection: HashSet<u32>,
+    selection: HashMap<u32, Rect>,
     drag_mode: DragMode,
     draw_ctx: DrawCtx<'a>,
 }
@@ -103,14 +104,21 @@ pub enum DragMode {
     DragResize
 }
 
+pub fn click_select_rect(p: &Point, selection: &HashMap<u32, Rect>, vp: &Point) -> Option<u32> {
+    selection.iter().find(|(_, r)| r.in_bounds(p, vp)).map(|(id, _)| *id)
+}
+
 impl<'a> AppState<'a> {
     pub fn new(draw_list: DrawList, draw_ctx: DrawCtx<'a>) -> AppState<'a> {
         AppState {
             draw_list,
-            selection: HashSet::new(),
+            selection: HashMap::new(),
             drag_mode: DragMode::DragNone,
             draw_ctx
         }
+    }
+    fn get_shape_select_box(&self, s: &Shape) -> Rect {
+        Rect::bounding_box(&s.verts(&self.draw_ctx.viewport))
     }
     pub fn handle_mouse_event(&mut self, ev: &Event, kmod: &Mod) {
         match *ev {
@@ -118,7 +126,7 @@ impl<'a> AppState<'a> {
                 if mouse_btn == sdl2::mouse::MouseButton::Left {
                     let pt = Point{x: x as f32,y: y as f32};
                     let clear_select = (*kmod & Mod::LCTRLMOD) == Mod::NOMOD;
-                    if let Some(select_id) = self.draw_list.click_select_rect(&pt, &self.selection, &self.draw_ctx.viewport) {
+                    if let Some(select_id) = click_select_rect(&pt, &self.selection, &self.draw_ctx.viewport) {
                         self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape: select_id, clear_select };
                     }
                     else {
@@ -126,7 +134,8 @@ impl<'a> AppState<'a> {
                             self.selection.clear();
                         }
                         if let Some(click_shape) = self.draw_list.click_shape(&pt, &self.draw_ctx.viewport) {
-                            self.selection.insert(click_shape);
+                            let s = self.draw_list.get(&click_shape).unwrap();
+                            self.selection.insert(click_shape, self.get_shape_select_box(s));
                             self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape, clear_select };
                         }
                         else if clear_select {
@@ -140,8 +149,9 @@ impl<'a> AppState<'a> {
                     match self.drag_mode {
                         DragMode::DragShapes { click_shape, clear_select, .. } => {
                             if clear_select { 
+                                let s = self.selection[&click_shape];
                                 self.selection.clear();
-                                self.selection.insert(click_shape);
+                                self.selection.insert(click_shape, s);
                             }
                         },
                         _ => {}
@@ -154,14 +164,19 @@ impl<'a> AppState<'a> {
                 match self.drag_mode {
                     DragMode::DragShapes { ref mut last_pt, ref mut clear_select, .. }=> {
                         *clear_select = false;
-                        for id in self.selection.iter() {
+                        for (id, ref mut rect) in self.selection.iter_mut() {
                             self.draw_list.get_mut(id).map(|s| s.drag(&(pt - *last_pt)));
+                            rect.drag(&(pt - *last_pt));
                         }
                         *last_pt = pt;
                     }
                     DragMode::SelectBox {start_pt, ref mut last_pt} => {
-                        self.selection = self.draw_list.get_box_selection(&Rect::new(start_pt, pt), &self.draw_ctx.viewport);
                         *last_pt = pt;
+                        self.selection = 
+                            HashMap::from_iter(
+                                self.draw_list.get_box_selection(&Rect::new(start_pt, pt), &self.draw_ctx.viewport).iter().map(|(id, shape)|
+                                    (*id, self.get_shape_select_box(shape))
+                                ));
                     }
                     _ => {}
                 }
@@ -178,7 +193,7 @@ impl<'a> AppState<'a> {
         }
     }
     fn draw_shape_select_boxes(&self) {
-        for (_, r) in self.draw_list.get_select_rects(&self.selection, &self.draw_ctx.viewport).iter() {
+        for (_, r) in self.selection.iter() {
             r.builder().color(255,255,255).fill(false).get().draw(&self.draw_ctx);
         }
     }

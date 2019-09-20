@@ -13,6 +13,11 @@ mod primitives;
 use interface::{AppState, DrawList};
 use primitives::{*};
 
+fn rand_color() -> (u8, u8, u8) {
+    let mut rng = rand::thread_rng();
+    (rng.gen_range(0, 255), rng.gen_range(0, 255), rng.gen_range(0, 255))
+}
+
 impl DrawList {
     fn add_test_shapes(&mut self) {
         self.add(ShapeBuilder::new() 
@@ -67,18 +72,15 @@ impl DrawList {
     }
     fn add_random_shapes(&mut self, vp: &Point, n: u8) {
         const MIN_DIM: u32 = 10;
-        let max_width = vp.x as u32 / 8;
-        let max_height = vp.y as u32 / 8;
+        let max_width = vp.x as u32 / 6;
+        let max_height = vp.y as u32 / 6;
         let rand_pt = || {
             let mut rng = rand::thread_rng(); 
             let x = rng.gen_range(vp.x as i32 / 11, vp.x as i32 * 10 / 11);
             let y = rng.gen_range(vp.y as i32 / 11, vp.y as i32 * 10 / 11);
             (x,y)
         };
-        let rand_color = || {
-            let mut rng = rand::thread_rng();
-            (rng.gen_range(0, 255), rng.gen_range(0, 255), rng.gen_range(0, 255))
-        };
+        
         let rand_rot = || {
             let mut rng = rand::thread_rng();
             rng.gen_range(0, 360)
@@ -128,9 +130,10 @@ fn main() {
     gl_attr.set_context_version(4,5);
     let _gl = gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as *const std::os::raw::c_void);
 
+    let (r, g, b) = rgb_to_f32(&rand_color());
     unsafe {
         gl::Viewport(0, 0, VIEWPORT.x as i32, VIEWPORT.y as i32);
-        gl::ClearColor(0.3, 0.3, 0.5, 1.0);
+        gl::ClearColor(r, g, b, 1.0);
     }
 
     let programs = PrimPrograms::new();
