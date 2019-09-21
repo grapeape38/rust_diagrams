@@ -25,15 +25,16 @@ impl DrawList {
             .offset(200,200)
             .color(0, 255, 0).get()
         );
+        
         self.add(ShapeBuilder::new() 
             .rect(200, 100)
             .offset(400,200)
-            .rot(45.)
             .color(0, 0, 255).get()
         );
         self.add(ShapeBuilder::new()
             .circle(100)
             .offset(200,400)
+            .fill(false)
             .color(255, 0, 255).get()
         );
         self.add(ShapeBuilder::new() 
@@ -41,7 +42,6 @@ impl DrawList {
             .offset(400,400)
             .color(255, 255, 0).get()
         );
-
         self.add(ShapeBuilder::new() 
             .square(200)
             .offset(600,600)
@@ -50,11 +50,9 @@ impl DrawList {
 
         self.add(ShapeBuilder::new()
             .square(150)
-            .rot(45.)
             .color(200,100,200)
             .offset(600,200).get()
         );
-
         self.add(LineBuilder::new()
             .points(200.,200.,400.,400.)
             .color(0, 255, 255).line_width(6.).get()
@@ -80,11 +78,10 @@ impl DrawList {
             let y = rng.gen_range(vp.y as i32 / 11, vp.y as i32 * 10 / 11);
             (x,y)
         };
-        
-        let rand_rot = || {
+        /*let rand_rot = || {
             let mut rng = rand::thread_rng();
             rng.gen_range(0, 360)
-        };
+        };*/
         let rand_shape = || {
             let mut rng = rand::thread_rng(); 
             let p1 = rand_pt();
@@ -103,7 +100,7 @@ impl DrawList {
                     1 => sb.rect(width, height),
                     _ => sb.ellipse(width, height)
                 };
-                sb.color(color.0, color.1, color.2).offset(p1.0, p1.1).rot(rand_rot() as f32).get()
+                sb.color(color.0, color.1, color.2).offset(p1.0, p1.1).get()
             }
         };
         for _ in 0..n {
@@ -140,6 +137,7 @@ fn main() {
     let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
     
     let mut draw_list = DrawList::new();
+    //draw_list.add_test_shapes();
     draw_list.add_random_shapes(&VIEWPORT, 10);
 
     let mut app_state = AppState::new(draw_list, draw_ctx);

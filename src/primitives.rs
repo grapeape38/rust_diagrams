@@ -13,7 +13,7 @@ type PrimMap = HashMap<PrimType, GLuint>;
 
 pub fn prim_map() -> PrimMap {
     let mut m = HashMap::new();
-    for prim in &[PT::Triangle, PT::Circle, PT::Rect, PT::Line] {
+    for prim in &[PT::Triangle, PT::Circle, PT::Rect, PT::Ring, PT::Line] {
         m.insert(*prim, prim.buffer_data());
     }
     m
@@ -23,44 +23,44 @@ type ProgMap<'a> = HashMap<PrimType, &'a Program>;
 
 pub struct PrimPrograms {
     line_prog: Program,
-    shape_prog: Program
+    shape_prog: Program,
 }
 
 impl PrimPrograms {
     pub fn new() -> PrimPrograms {
         let vert_shader = Shader::from_vert_source(
-            &CString::new(include_str!("shape2d.vert")).unwrap()
+            &CString::new(include_str!("shaders/shape2d.vert")).unwrap()
         ).unwrap();
 
         let frag_shader = Shader::from_frag_source(
-            &CString::new(include_str!("shape2d.frag")).unwrap()
+            &CString::new(include_str!("shaders/shape2d.frag")).unwrap()
+        ).unwrap();
+
+        let line_shader = Shader::from_vert_source(
+            &CString::new(include_str!("shaders/line.vert")).unwrap()
+        ).unwrap();
+
+        let line_geom_shader = Shader::from_geom_source(
+            &CString::new(include_str!("shaders/line.geom")).unwrap()
         ).unwrap();
 
         let mut shaders = vec![vert_shader, frag_shader];
-
         let shape_prog = Program::from_shaders(shaders.as_ref()).unwrap();
 
-        let line_shader = Shader::from_vert_source(
-            &CString::new(include_str!("line.vert")).unwrap()
-        ).unwrap();
-
-        let geom_shader = Shader::from_geom_source(
-            &CString::new(include_str!("line.geom")).unwrap()
-        ).unwrap();
-
         shaders[0] = line_shader;
-        shaders.insert(1, geom_shader);
+        shaders.insert(1, line_geom_shader);
         let line_prog = Program::from_shaders(shaders.as_ref()).unwrap();
+
         PrimPrograms {
             shape_prog,
-            line_prog
+            line_prog,
         }
     }
 }
 
 pub fn prog_map(programs: &PrimPrograms) -> ProgMap {
    let mut m = HashMap::new();
-   for prim in &[PrimType::Triangle, PrimType::Circle, PT::Rect] {
+   for prim in &[PrimType::Triangle, PT::Circle, PT::Rect, PT::Ring] {
         m.insert(*prim, &programs.shape_prog);
     }
     m.insert(PT::Line, &programs.line_prog);
@@ -71,6 +71,7 @@ pub fn prog_map(programs: &PrimPrograms) -> ProgMap {
 pub enum PrimType {
     Triangle,
     Circle,
+    Ring,
     Rect,
     Line,
 }
@@ -88,13 +89,16 @@ impl PrimType {
                 ]
             },
             PT::Circle => {
-                let n = NCIRCLE_VERTS as f32;
                 let mut v = vec![0.0, 0.0];
-                v.extend((0..NCIRCLE_VERTS).map(|i| 
-                    vec![f32::cos(2.*PI*i as f32 / (n-1.)), f32::sin(2.*PI*i as f32 / (n-1.))]
-                ).flatten());
+                v.extend(PT::Ring.verts());
                 v
             },
+            PT::Ring => {
+                let n = NCIRCLE_VERTS as f32;
+                (0..NCIRCLE_VERTS).map(|i| 
+                    vec![0.5 * f32::cos(2.*PI*i as f32 / (n-1.)), 0.5 * f32::sin(2.*PI*i as f32 / (n-1.))]
+                ).flatten().collect()
+            }
             PT::Rect => {
                vec![ 
                     -0.5, -0.5,
@@ -109,13 +113,14 @@ impl PrimType {
         }
     }
     fn buffer_data(&self) -> GLuint {
-        unsafe { buffer_verts(&self.verts()) }
+        unsafe { buffer_verts(&self.verts().as_slice()) }
     }
     fn mode(&self) -> GLenum {
         match self {
             PT::Triangle => gl::TRIANGLES,
             PT::Rect => gl::QUADS,
             PT::Circle => gl::TRIANGLE_FAN,
+            PT::Ring => gl::LINE_STRIP, 
             PT::Line => gl::POINTS
         }
     }
@@ -123,7 +128,8 @@ impl PrimType {
         match self {
             PT::Triangle => 3,
             PT::Rect => 4,
-            PT::Circle => 3 * NCIRCLE_VERTS,
+            PT::Circle => NCIRCLE_VERTS + 1, 
+            PT::Ring => NCIRCLE_VERTS, 
             PT::Line => 1
         }
     }
@@ -132,8 +138,8 @@ impl PrimType {
             PT::Triangle => {
                 p.x >= -0.5 && p.x <= 0.5 && p.y >= -0.5 && p.y <= (0.5 - f32::abs(p.x))
             }
-            PT::Circle => {
-                p.mag() <= 1.
+            PT::Circle | PT::Ring => {
+                p.mag() <= 0.5
             }
             PT::Rect => {
                 p.x >= -0.5 && p.x <= 0.5 && p.y >= -0.5 && p.y <= 0.5 
@@ -143,29 +149,9 @@ impl PrimType {
             }
         }
     }
-    fn offset_from_internal(&self, pt_index: usize) -> Point {
-        let mut v = vec![(0.,0.)];
-        let offsets = match *self {
-            PT::Triangle { .. } => {
-                vec![(-0.25,-0.25), (0., 0.25), (0.25, 0.25)]
-            }
-            PT::Rect { .. } => {
-                vec![(-0.25,-0.25), (-0.25, 0.25), (0.25, 0.25), (0.25, -0.25)]
-            }
-            PT::Circle{ .. } => {
-                (0..8).map(|i| (f32::cos(2.*PI*i as f32 / 7.), f32::sin(2.*PI*i as f32 / 7.))).collect()
-            }
-            PT::Line { .. } => {
-                vec![]
-            }
-        };
-        v.extend(offsets);
-        let intern_off = v.get(pt_index).unwrap_or(&v[0]);
-        Point { x: intern_off.0, y: intern_off.1 }
-    }
 }
 
-unsafe fn buffer_verts(verts: &Vec<f32>) -> GLuint {
+unsafe fn buffer_verts(verts: &[f32]) -> GLuint {
     let mut vao: GLuint = 0;
     let mut vbo: GLuint = 0;
     gl::GenBuffers(1, &mut vbo);
@@ -200,10 +186,10 @@ impl Point {
     pub fn new() -> Point {
         Point {x:0., y:0.}
     }
-    fn mag(&self) -> f32 {
+    pub fn mag(&self) -> f32 {
         f32::sqrt((self.x*self.x + self.y*self.y) as f32)
     }
-    fn dist(&self, p2: &Point) -> f32 {
+    pub fn dist(&self, p2: &Point) -> f32 {
         let d = *self - *p2;
         d.mag()
     }
@@ -291,10 +277,6 @@ impl Line {
         })
     }
     fn dist_to_pt(&self, p: &Point) -> f32 {
-        /*let opp = Line { a: -self.b, b: self.a, c: 0.0 };
-        let l2 = Line::from_pt_slope(p, opp);
-        let inter = self.intersect(&l2).unwrap();
-        p.dist(&inter)*/
         let (a,b,c) = (self.a, self.b, self.c);
         f32::abs(a*p.x + b*p.y + c) / f32::sqrt(a*a + b*b)
     }
@@ -305,6 +287,21 @@ pub struct DrawLine {
     pub p1: Point, 
     pub p2: Point,
     pub line_width: f32,
+}
+
+impl DrawLine {
+    pub fn min_x(&mut self) -> &mut f32 {
+        if self.p1.x < self.p2.x { &mut self.p1.x } else { &mut self.p2.x }
+    }
+    pub fn max_x(&mut self) -> &mut f32 {
+        if self.p1.x > self.p2.x { &mut self.p1.x } else { &mut self.p2.x }
+    }
+    pub fn min_y(&mut self) -> &mut f32 {
+        if self.p1.y < self.p2.y { &mut self.p1.y } else { &mut self.p2.y }
+    }
+    pub fn max_y(&mut self) -> &mut f32 {
+        if self.p1.y > self.p2.y { &mut self.p1.y } else { &mut self.p2.y }
+    }
 }
 
 impl Default for DrawLine {
@@ -321,7 +318,7 @@ impl Default for DrawLine {
 pub struct DrawPolygon {
     prim: PrimType,
     pub fill: bool,
-    pub offset: (Point, usize),
+    pub offset: Point,
     pub width: u32,
     pub height: u32,
     pub rot: f32,
@@ -331,7 +328,7 @@ impl Default for DrawPolygon {
     fn default() -> Self {
         DrawPolygon {
             prim: PT::Triangle,
-            offset: (Point::new(), 0),
+            offset: Point::new(),
             fill: true,
             width: 5,
             height: 5,
@@ -340,12 +337,8 @@ impl Default for DrawPolygon {
     }
 }
 
-struct PolyTransform {
-    translation: glm::Mat3,
-    rotation: glm::Mat3,
-    scale: glm::Mat3
-}
-
+struct PolyTransform(glm::Mat3);
+    
 #[allow(dead_code)]
 impl PolyTransform {
     fn new(s: &DrawPolygon, vp: &Point) -> Self {
@@ -353,20 +346,13 @@ impl PolyTransform {
           x: 2. * s.width as f32 / vp.x,
           y: 2. * s.height as f32 / vp.y
         };
-        //let mut off_pt = coords_to_pixels(&(s.prim.offset_from_internal(s.offset.1) * sc), vp) - coords_to_pixels(&Point::new(), vp);
-        let mut off_pt = Point::new();
-        off_pt += s.offset.0;
-        PolyTransform { 
-            translation: glm::translate2d(&glm::identity(), &pixels_to_trans_vec(&off_pt, vp)),
-            rotation: glm::rotate2d(&glm::identity(), 180. * s.rot / PI),
-            scale: glm::scale2d(&glm::identity(), &glm::vec2(sc.x, sc.y))
-        }
-    }
-    fn get(&self) -> glm::Mat3 {
-        self.translation * self.rotation * self.scale
+        let mut trans = glm::translate2d(&glm::identity(), &pixels_to_trans_vec(&s.offset, vp));
+        trans = glm::rotate2d(&trans, 180. * s.rot / PI);
+        trans = glm::scale2d(&trans, &glm::vec2(sc.x, sc.y));
+        PolyTransform(trans)
     }
     fn inv(&self) -> glm::Mat3 {
-        glm::inverse(&self.get())
+        glm::inverse(&self.0)
     }
 }
 
@@ -389,12 +375,8 @@ trait Transform {
 
 impl Transform for PolyTransform {
     unsafe fn send_uniforms(&self, prog_id: GLuint) {
-        let trans_loc = gl::GetUniformLocation(prog_id, GChar::new("translate").ptr());
-        gl::UniformMatrix3fv(trans_loc, 1, gl::FALSE, self.translation.as_ptr());
-        let rot_loc = gl::GetUniformLocation(prog_id, GChar::new("rotation").ptr());
-        gl::UniformMatrix3fv(rot_loc, 1, gl::FALSE, self.rotation.as_ptr());
-        let scale_loc = gl::GetUniformLocation(prog_id, GChar::new("scale").ptr());
-        gl::UniformMatrix3fv(scale_loc, 1, gl::FALSE, self.scale.as_ptr());
+        let trans_loc = gl::GetUniformLocation(prog_id, GChar::new("transform").ptr());
+        gl::UniformMatrix3fv(trans_loc, 1, gl::FALSE, self.0.as_ptr());
     }
 }
 
@@ -413,14 +395,15 @@ pub trait InBounds {
 
 #[derive(Copy, Clone)]
 pub struct Rect {
+    //upper left corner, lower right corner
     pub c1: Point, pub c2: Point
 }
 
 impl Rect {
     pub fn new(c1: Point, c2: Point) -> Self {
-        Rect { c1, c2 }
+        Rect::bounding_box(&[c1, c2])
     }
-    pub fn bounding_box(pts: &Vec<Point>) -> Self {
+    pub fn bounding_box(pts: &[Point]) -> Self {
         if pts.is_empty() { return Rect{c1: Point::new(), c2: Point::new()} }
         let mut min_pt = pts[0]; let mut max_pt = min_pt;
         for p in pts {
@@ -429,13 +412,13 @@ impl Rect {
             if p.y < min_pt.y { min_pt.y = p.y };
             if p.y > max_pt.y { max_pt.y = p.y };
         }
-        Rect::new(min_pt, max_pt)
+        Rect {c1: min_pt, c2: max_pt}
     }
     pub fn builder(&self) -> ShapeBuilder {
         let center = self.center();
         ShapeBuilder::new().rect(self.width() as u32, self.height() as u32).offset(center.x as i32, center.y as i32)
     }
-    fn center(&self) -> Point {
+    pub fn center(&self) -> Point {
         (self.c1 + self.c2) / 2.
     }
     pub fn width(&self) -> f32 {
@@ -443,6 +426,24 @@ impl Rect {
     }
     pub fn height(&self) -> f32 {
         f32::abs(self.c2.y - self.c1.y)
+    }
+    pub fn verts(&self) -> Vec<Point> {
+        vec![self.c1, 
+             Point{x: *self.max_x(), y: *self.min_y()},
+             self.c2,
+             Point{x: *self.min_x(), y: *self.max_y()}] //clockwise
+    }
+    pub fn min_x(&self) -> &f32 {
+        &self.c1.x
+    }
+    pub fn min_y(&self) -> &f32 {
+        &self.c1.y
+    }
+    pub fn max_x(&self) -> &f32 {
+        &self.c2.x
+    }
+    pub fn max_y(&self) -> &f32 {
+        &self.c2.y
     }
 }
 
@@ -513,7 +514,7 @@ impl Shape {
     pub fn verts(&self, vp: &Point) -> Vec<Point> {
         match &self.props {
             SP::Polygon(ref draw_poly) => {
-                let trans = PolyTransform::new(&draw_poly, vp).get();
+                let trans = PolyTransform::new(&draw_poly, vp).0;
                 let v = self.prim_type().verts().chunks(2).map(|s| { 
                     let v = trans * glm::vec3(s[0], s[1], 1.0);
                     coords_to_pixels(&Point{x:v[0],y:v[1]}, vp)
@@ -540,10 +541,8 @@ impl Shape {
         let vao = ctx.prim_map[&ptype];
         let line_width = if let SP::Line(ref draw_line) = self.props { draw_line.line_width } else { 3. };
         if let SP::Polygon(ref draw_poly) = self.props {
-            let poly_mode: GLuint = match draw_poly.fill {
-                true => gl::FILL,
-                false => gl::LINE
-            };
+            let poly_mode: GLuint = 
+                if draw_poly.fill { gl::FILL } else { gl::LINE };
             unsafe { gl::PolygonMode(gl::FRONT_AND_BACK, poly_mode); }
         }
         unsafe {
@@ -607,12 +606,8 @@ impl ShapeBuilder {
     pub fn new() -> ShapeBuilder {
         ShapeBuilder { s: Shape::default(), p: DrawPolygon::default() }
     }
-    pub fn offset_from(mut self, x: i32, y: i32, i: usize) -> Self {
-        self.p.offset = (Point {x: x as f32,y: y as f32}, i);
-        self
-    }
     pub fn offset(mut self, x: i32, y: i32) -> Self {
-        self.p.offset = (Point {x: x as f32,y: y as f32}, 0);
+        self.p.offset = Point {x: x as f32,y: y as f32};
         self
     }
     pub fn rot(mut self, rot: f32) -> ShapeBuilder {
@@ -659,6 +654,16 @@ impl ShapeBuilder {
     }
     pub fn fill(mut self, fill: bool) -> Self {
         self.p.fill = fill;
+        if let PT::Circle = self.p.prim {
+            if !fill {
+                self.p.prim = PT::Ring
+            }
+        }
+        if let PT::Ring = self.p.prim {
+            if fill {
+                self.p.prim = PT::Circle
+            }
+        }
         self
     }
     pub fn get(mut self) -> Shape { self.s.props = SP::Polygon(self.p); self.s }

@@ -10,6 +10,8 @@ edition = "2018"
 gl = "0.13.0"
 nalgebra-glm = "0.4.2"
 rand = "0.7.1"
+num-traits = "0.2.8"
+num-derive = "0.2"
 
 [dependencies.sdl2]
 version = "0.32.2"
