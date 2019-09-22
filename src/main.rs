@@ -129,7 +129,8 @@ fn main() {
     gl_attr.set_context_version(4,5);
     let _gl = gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as *const std::os::raw::c_void);
 
-    let (r, g, b) = rgb_to_f32(&rand_color());
+    //let (r, g, b) = rgb_to_f32(&rand_color());
+    let (r, g, b) = rgb_to_f32(&(3, 190, 252));
     unsafe {
         gl::Viewport(0, 0, VIEWPORT.x as i32, VIEWPORT.y as i32);
         gl::ClearColor(r, g, b, 1.0);
@@ -140,7 +141,7 @@ fn main() {
     
     let mut draw_list = DrawList::new();
     //draw_list.add_test_shapes();
-    draw_list.add_random_shapes(&VIEWPORT, 10);
+    //draw_list.add_random_shapes(&VIEWPORT, 10);
 
     let mut app_state = AppState::new(draw_list, draw_ctx);
 

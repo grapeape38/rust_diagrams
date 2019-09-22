@@ -323,7 +323,7 @@ impl Default for DrawLine {
 
 #[derive(Clone)]
 pub struct DrawPolygon {
-    prim: PrimType,
+    pub prim: PrimType,
     pub fill: bool,
     pub offset: Point,
     pub width: u32,
@@ -340,6 +340,15 @@ impl Default for DrawPolygon {
             width: 5,
             height: 5,
             rot: 0.,
+        }
+    }
+}
+
+impl DrawPolygon {
+    pub fn from_prim(ptype: PrimType) -> Self {
+        DrawPolygon {
+            prim: ptype,
+            ..DrawPolygon::default()
         }
     }
 }
@@ -401,7 +410,7 @@ pub trait InBounds {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool;
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Rect {
     //upper left corner, lower right corner
     pub c1: Point, pub c2: Point
@@ -525,6 +534,12 @@ impl Default for Shape {
 }
 
 impl Shape {
+    pub fn from_props(props: ShapeProps) -> Self {
+        Shape {
+            props,
+            ..Shape::default()
+        }
+    }
     pub fn verts(&self, vp: &Point) -> Vec<Point> {
         match &self.props {
             SP::Polygon(ref draw_poly) => {
@@ -617,7 +632,7 @@ pub struct ShapeBuilder {
 
 #[allow(dead_code)]
 impl ShapeBuilder {
-    pub fn new() -> ShapeBuilder {
+    pub fn new() -> Self {
         ShapeBuilder { s: Shape::default(), p: DrawPolygon::default() }
     }
     pub fn offset(mut self, x: i32, y: i32) -> Self {
@@ -668,19 +683,22 @@ impl ShapeBuilder {
     }
     pub fn fill(mut self, fill: bool) -> Self {
         self.p.fill = fill;
+        self
+    }
+    pub fn get(mut self) -> Shape { 
         if let PT::Circle = self.p.prim {
-            if !fill {
+            if !self.p.fill {
                 self.p.prim = PT::Ring
             }
         }
         if let PT::Ring = self.p.prim {
-            if fill {
+            if self.p.fill {
                 self.p.prim = PT::Circle
             }
         }
-        self
+        self.s.props = SP::Polygon(self.p); 
+        self.s 
     }
-    pub fn get(mut self) -> Shape { self.s.props = SP::Polygon(self.p); self.s }
 }
 
 pub struct LineBuilder {
