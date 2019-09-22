@@ -223,6 +223,13 @@ impl std::ops::Sub for Point {
     }
 }
 
+impl std::ops::SubAssign for Point {
+    fn sub_assign(&mut self, other: Point) {
+        self.x -= other.x;
+        self.y -= other.y;
+    }
+}
+
 impl std::ops::Mul for Point {
     type Output = Point;
     fn mul(self, other: Point) -> Self::Output {
@@ -342,12 +349,13 @@ struct PolyTransform(glm::Mat3);
 #[allow(dead_code)]
 impl PolyTransform {
     fn new(s: &DrawPolygon, vp: &Point) -> Self {
+        let rad = 180. * s.rot / PI;
         let sc = Point{ 
-          x: 2. * s.width as f32 / vp.x,
-          y: 2. * s.height as f32 / vp.y
+          x: 2. * s.width as f32 * (f32::cos(rad) + f32::sin(rad)) / vp.x,
+          y: 2. * s.height as f32 * (f32::cos(rad) + f32::sin(rad)) / vp.y
         };
         let mut trans = glm::translate2d(&glm::identity(), &pixels_to_trans_vec(&s.offset, vp));
-        trans = glm::rotate2d(&trans, 180. * s.rot / PI);
+        trans = glm::rotate2d(&trans, rad);
         trans = glm::scale2d(&trans, &glm::vec2(sc.x, sc.y));
         PolyTransform(trans)
     }
@@ -429,9 +437,15 @@ impl Rect {
     }
     pub fn verts(&self) -> Vec<Point> {
         vec![self.c1, 
-             Point{x: *self.max_x(), y: *self.min_y()},
+             self.ur(),
              self.c2,
-             Point{x: *self.min_x(), y: *self.max_y()}] //clockwise
+             self.bl()] //clockwise
+    }
+    pub fn ur(&self) -> Point {
+        Point{x: *self.max_x(), y: *self.min_y()}
+    }
+    pub fn bl(&self) -> Point {
+        Point{x: *self.min_x(), y: *self.max_y()}
     }
     pub fn min_x(&self) -> &f32 {
         &self.c1.x

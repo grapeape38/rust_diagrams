@@ -45,12 +45,14 @@ impl DrawList {
         self.add(ShapeBuilder::new() 
             .square(200)
             .offset(600,600)
+            .rot(45.)
             .color(255, 255, 255).get()
         );
 
         self.add(ShapeBuilder::new()
             .square(150)
             .color(200,100,200)
+            .rot(30.)
             .offset(600,200).get()
         );
         self.add(LineBuilder::new()
@@ -85,7 +87,7 @@ impl DrawList {
         let rand_shape = || {
             let mut rng = rand::thread_rng(); 
             let p1 = rand_pt();
-            let r = rng.gen_range(0,4);
+            let r = rng.gen_range(0,3);
             let color = rand_color();
             if r == 3 {
                 let p2 = rand_pt();

@@ -5,9 +5,27 @@ use num_traits::FromPrimitive;
 use std::collections::{HashMap};
 use sdl2::event::Event;
 use sdl2::keyboard::Mod;
+use sdl2::mouse::{Cursor, SystemCursor};
 use std::iter::FromIterator;
 use crate::primitives::*;
 use crate::ShapeProps as SP;
+
+pub struct CursorMap(HashMap<SystemCursor, Cursor>);
+impl CursorMap {
+    fn new() -> Self {
+        let mut m = HashMap::new();
+        m.insert(SystemCursor::Arrow, Cursor::from_system(SystemCursor::Arrow).unwrap());
+        m.insert(SystemCursor::Hand, Cursor::from_system(SystemCursor::Hand).unwrap());
+        m.insert(SystemCursor::SizeNESW, Cursor::from_system(SystemCursor::SizeNESW).unwrap());
+        m.insert(SystemCursor::SizeNS, Cursor::from_system(SystemCursor::SizeNS).unwrap());
+        m.insert(SystemCursor::SizeNWSE, Cursor::from_system(SystemCursor::SizeNWSE).unwrap());
+        m.insert(SystemCursor::SizeWE, Cursor::from_system(SystemCursor::SizeWE).unwrap());
+        CursorMap(m)
+    }
+    fn get(&self, cursor: &SystemCursor) -> &Cursor {
+        &self.0[cursor]
+    }
+}
 
 impl Rect {
     fn drag(&mut self, off: &Point) {
@@ -41,7 +59,7 @@ impl Shape {
     fn in_select_box(&self, r: &Rect, vp: &Point) -> bool {
         self.verts(&vp).iter().any(|v| r.in_bounds(v, vp))
     }
-    fn drag_resize(&mut self, r: &Rect) {
+    fn drag_side(&mut self, r: &Rect) {
         match self.props {
             SP::Polygon(ref mut draw_poly) => {
                 draw_poly.width = r.width() as u32;
@@ -102,23 +120,30 @@ impl DrawList {
     }
 }
 
+type ShapeID = u32;
+
 pub struct AppState<'a> {
     draw_list: DrawList,
-    selection: HashMap<u32, ShapeSelectBox>,
+    selection: HashMap<ShapeID, ShapeSelectBox>,
     drag_mode: DragMode,
+    hover_item: HoverItem,
     draw_ctx: DrawCtx<'a>,
+    cursors: CursorMap
 }
 
 #[derive(Clone, Copy)]
 pub enum DragMode {
     DragNone,
     SelectBox {start_pt: Point, last_pt: Point},
-    DragShapes { last_pt: Point, click_shape: u32, clear_select: bool },
-    DragResize { click_box: u32, drag_vertex: DragVertex }
+    DragShapes { last_pt: Point, click_shape: ShapeID, clear_select: bool },
+    DragResize { click_box: ShapeID, drag_vertex: DragVertex }
 }
 
-fn click_select_rect(p: &Point, selection: &HashMap<u32, ShapeSelectBox>, vp: &Point) -> Option<u32> {
-    selection.iter().find(|(_, r)| r.in_bounds(p, vp)).map(|(id, _)| *id)
+#[derive(Clone, Copy)]
+pub enum HoverItem {
+   HoverNone,
+   HoverVertex(u32, DragVertex),
+   HoverRect(u32) 
 }
 
 impl<'a> AppState<'a> {
@@ -127,11 +152,32 @@ impl<'a> AppState<'a> {
             draw_list,
             selection: HashMap::new(),
             drag_mode: DragMode::DragNone,
-            draw_ctx
+            hover_item: HoverItem::HoverNone,
+            draw_ctx,
+            cursors: CursorMap::new()
         }
     }
     fn get_shape_select_box(&self, s: &Shape) -> ShapeSelectBox {
         ShapeSelectBox::new(Rect::bounding_box(&s.verts(&self.draw_ctx.viewport)))
+    }
+    fn fuzzy_hover_rect(&self, p: &Point, vp: &Point) -> Option<ShapeID> {
+        self.selection.iter().find(|(_, r)| r.fuzzy_in_bounds(p, vp)).map(|(id, _)| *id)
+    }
+    fn set_drag_hover_cursor(&mut self, drag_vertex: &DragVertex) {
+        match drag_vertex {
+            DragVertex::Left | DragVertex::Right => {
+                self.cursors.get(&SystemCursor::SizeWE).set();
+            }
+            DragVertex::TopCenter | DragVertex::BottomCenter => {
+                self.cursors.get(&SystemCursor::SizeNS).set();
+            }
+            DragVertex::TopLeft | DragVertex::BottomRight => {
+                self.cursors.get(&SystemCursor::SizeNWSE).set();
+            }
+            DragVertex::TopRight | DragVertex::BottomLeft => {
+                self.cursors.get(&SystemCursor::SizeNESW).set();
+            }
+        }
     }
     pub fn handle_mouse_event(&mut self, ev: &Event, kmod: &Mod) {
         match *ev {
@@ -139,13 +185,13 @@ impl<'a> AppState<'a> {
                 if mouse_btn == sdl2::mouse::MouseButton::Left {
                     let pt = Point{x: x as f32,y: y as f32};
                     let clear_select = (*kmod & Mod::LCTRLMOD) == Mod::NOMOD;
-                    if let Some(select_id) = click_select_rect(&pt, &self.selection, &self.draw_ctx.viewport) {
-                        if let Some(drag_vertex) = self.selection[&select_id].get_drag_vertex(&pt) {
-                            self.drag_mode = DragMode::DragResize { click_box: select_id, drag_vertex };
-                        }
-                        else {
+                    if let HoverItem::HoverRect(select_id) = self.hover_item {
+                        if self.selection[&select_id].in_bounds(&pt, &self.draw_ctx.viewport) {
                             self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape: select_id, clear_select };
                         }
+                    }
+                    else if let HoverItem::HoverVertex(select_id, drag_vertex) = self.hover_item {
+                        self.drag_mode = DragMode::DragResize { click_box: select_id, drag_vertex };
                     }
                     else {
                         if clear_select {
@@ -155,6 +201,8 @@ impl<'a> AppState<'a> {
                             let s = self.draw_list.get(&click_shape).unwrap();
                             self.selection.insert(click_shape, self.get_shape_select_box(s));
                             self.drag_mode = DragMode::DragShapes { last_pt: pt, click_shape, clear_select };
+                            self.cursors.get(&SystemCursor::Hand).set();
+                            self.hover_item = HoverItem::HoverRect(click_shape);
                         }
                         else if clear_select {
                             self.drag_mode = DragMode::SelectBox{start_pt: pt, last_pt: pt};
@@ -197,13 +245,28 @@ impl<'a> AppState<'a> {
                                 ));
                     }
                     DragMode::DragResize { click_box, ref mut drag_vertex } => {
-                        *drag_vertex = self.selection.get_mut(&click_box).map(|s| s.drag_resize(&drag_vertex, &pt))
+                        *drag_vertex = self.selection.get_mut(&click_box).map(|s| s.drag_side(&drag_vertex, &pt))
                             .unwrap_or(*drag_vertex);
                         if let Some(ref sbox) = self.selection.get(&click_box) {
-                            self.draw_list.get_mut(&click_box).map(|s| s.drag_resize(&sbox.r.clone()));
+                            self.draw_list.get_mut(&click_box).map(|s| s.drag_side(&sbox.r.clone()));
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if let Some(select_id) = self.fuzzy_hover_rect(&pt, &self.draw_ctx.viewport) {
+                            if let Some(drag_vertex) = self.selection[&select_id].get_drag_vertex(&pt) {
+                                self.set_drag_hover_cursor(&drag_vertex);
+                                self.hover_item = HoverItem::HoverVertex(select_id, drag_vertex);
+                            }
+                            else { 
+                                self.cursors.get(&SystemCursor::Hand).set();
+                                self.hover_item = HoverItem::HoverRect(select_id);
+                            }
+                        }
+                        else {
+                            self.cursors.get(&SystemCursor::Arrow).set();
+                            self.hover_item = HoverItem::HoverNone;
+                        }
+                    }
                 }
             }
             _ => {}
@@ -236,7 +299,7 @@ struct ShapeSelectBox {
 }
 
 #[derive(Debug, Copy, Clone, FromPrimitive)]
-enum DragVertex {
+pub enum DragVertex {
     TopLeft = 0,
     TopRight = 1,
     BottomRight = 2,
@@ -248,7 +311,7 @@ enum DragVertex {
 }
 
 impl ShapeSelectBox {
-    const MIN_CORNER_DIST: u32 = 20;
+    const MIN_CORNER_DIST: u32 = 10;
     fn new(r: Rect) -> Self {
         ShapeSelectBox { r }
     }
@@ -257,8 +320,7 @@ impl ShapeSelectBox {
         self.r.drag(off);
     }
 
-    #[allow(dead_code)]
-    fn drag_resize_swap_vertex(&mut self, vertex1: &DragVertex, vertex2: &DragVertex, start: &mut f32, min_max: &mut f32, new: &f32) 
+    fn drag_side_swap_vertex(&mut self, vertex1: &DragVertex, vertex2: &DragVertex, start: &mut f32, min_max: &mut f32, new: &f32) 
         -> DragVertex
     {
         if *start < *min_max {
@@ -282,44 +344,71 @@ impl ShapeSelectBox {
             }
         }
     }
-    fn drag_resize(&mut self, drag_vertex: &DragVertex, new_pt: &Point) -> DragVertex {
+    #[allow(dead_code)]
+    fn drag_corner_swap_vertex(&mut self, vertex1: &DragVertex, vertex2: &DragVertex, start: &mut Point, min_max: &mut Point, new: &Point)
+        -> DragVertex
+    {
+        let mut pt = *new;
+        let width = f32::abs(start.x - min_max.x);
+        let height = f32::abs(start.y - min_max.y);
+        //if y is shrinking, or both shrinking or both expanding, base on x
+        if  ((new.y <= start.y) != (start.y <= min_max.y) ||
+            (new.x <= start.x) == (start.x <= min_max.x) && (new.y <= start.y) == (start.y <= min_max.y))
+            && (f32::abs(new.x - start.x) < ShapeSelectBox::MIN_CORNER_DIST as f32)
+        {
+            pt.y = start.y + (new.x - start.x) * height / width;
+        }
+        //x shrinking, base on y
+        else {
+            pt.x = start.x + (new.y - start.y) * width / height;
+        }
+        self.drag_side_swap_vertex(vertex1, vertex2, &mut start.x, &mut min_max.x, &pt.x);
+        self.drag_side_swap_vertex(vertex1, vertex2, &mut start.y, &mut min_max.y, &pt.y)
+    }
+    fn drag_side(&mut self, drag_vertex: &DragVertex, new_pt: &Point) -> DragVertex {
         let mut r = self.r;
         let new_vtx = match *drag_vertex {
             DragVertex::TopCenter => {
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::BottomCenter, &mut r.c1.y, &mut r.c2.y, &new_pt.y)
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::BottomCenter, &mut r.c1.y, &mut r.c2.y, &new_pt.y)
             }
             DragVertex::BottomCenter => {
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::TopCenter, &mut r.c2.y, &mut r.c1.y, &new_pt.y)
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::TopCenter, &mut r.c2.y, &mut r.c1.y, &new_pt.y)
             }
             DragVertex::Left => {
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::Right, &mut r.c1.x, &mut r.c2.x, &new_pt.x)
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::Right, &mut r.c1.x, &mut r.c2.x, &new_pt.x)
             }
             DragVertex::Right => {
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::Left, &mut r.c2.x, &mut r.c1.x, &new_pt.x)
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::Left, &mut r.c2.x, &mut r.c1.x, &new_pt.x)
             }
             DragVertex::TopLeft => {
+                //self.drag_corner_swap_vertex(drag_vertex, &DragVertex::BottomRight, &mut r.c1, &mut r.c2, new_pt)
                 let h = (new_pt.x - r.c1.x) * r.height() / r.width();
                 let pt = Point{x: new_pt.x, y: r.c1.y + h};
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::BottomRight, &mut r.c1.x, &mut r.c2.x, &pt.x);
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::BottomRight, &mut r.c1.y, &mut r.c2.y, &pt.y)
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::BottomRight, &mut r.c1.x, &mut r.c2.x, &pt.x);
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::BottomRight, &mut r.c1.y, &mut r.c2.y, &pt.y)
             }
             DragVertex::BottomRight => {
+                //self.drag_corner_swap_vertex(drag_vertex, &DragVertex::TopLeft, &mut r.c2, &mut r.c1, new_pt)
                 let h = (new_pt.x - r.c2.x) * r.height() / r.width();
                 let pt = Point{x: new_pt.x, y: r.c2.y + h};
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::TopLeft, &mut r.c2.x, &mut r.c1.x, &pt.x);
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::TopLeft, &mut r.c2.y, &mut r.c1.y, &pt.y)
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::TopLeft, &mut r.c2.x, &mut r.c1.x, &pt.x);
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::TopLeft, &mut r.c2.y, &mut r.c1.y, &pt.y)
             }
             DragVertex::TopRight => {
+                //let (mut ur, mut bl) = (r.ur(), r.bl());
+                //let vtx = self.drag_corner_swap_vertex(drag_vertex, &DragVertex::BottomLeft, &mut ur, &mut bl, new_pt);
                 let h = (r.c2.x - new_pt.x) * r.height() / r.width();
                 let pt = Point{x: new_pt.x, y: r.c1.y + h};
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::BottomLeft, &mut r.c2.x, &mut r.c1.x, &pt.x);
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::BottomLeft, &mut r.c1.y, &mut r.c2.y, &pt.y)
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::BottomLeft, &mut r.c2.x, &mut r.c1.x, &pt.x);
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::BottomLeft, &mut r.c1.y, &mut r.c2.y, &pt.y)
             }
             DragVertex::BottomLeft => {
+                //let (mut ur, mut bl) = (r.ur(), r.bl());
+                //let vtx = self.drag_corner_swap_vertex(drag_vertex, &DragVertex::TopRight, &mut bl, &mut ur, new_pt);
                 let h = (r.c1.x - new_pt.x) * r.height() / r.width();
                 let pt = Point{x: new_pt.x, y: r.c2.y + h};
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::TopRight, &mut r.c1.x, &mut r.c2.x, &pt.x);
-                self.drag_resize_swap_vertex(drag_vertex, &DragVertex::TopRight, &mut r.c2.y, &mut r.c1.y, &pt.y)
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::TopRight, &mut r.c1.x, &mut r.c2.x, &pt.x);
+                self.drag_side_swap_vertex(drag_vertex, &DragVertex::TopRight, &mut r.c2.y, &mut r.c1.y, &pt.y)
             }
         };
         self.r = r;
@@ -350,6 +439,13 @@ impl ShapeSelectBox {
         //draw box
         self.r.builder().color(255,255,255).fill(false).get().draw(draw_ctx);
         self.draw_drag_circles(draw_ctx);
+    }
+    fn fuzzy_in_bounds(&self, p: &Point, vp: &Point) -> bool {
+        let mut r = self.r;
+        let padding = ShapeSelectBox::MIN_CORNER_DIST as f32;
+        r.c1 -= Point {x: padding, y: padding};
+        r.c2 += Point {x: padding, y: padding};
+        r.in_bounds(p, vp)
     }
 }
 
