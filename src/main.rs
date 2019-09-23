@@ -13,11 +13,13 @@ mod primitives;
 use interface::{AppState, DrawList};
 use primitives::{*};
 
+#[allow(dead_code)]
 fn rand_color() -> (u8, u8, u8) {
     let mut rng = rand::thread_rng();
     (rng.gen_range(0, 255), rng.gen_range(0, 255), rng.gen_range(0, 255))
 }
 
+#[allow(dead_code)]
 impl DrawList {
     fn add_test_shapes(&mut self) {
         self.add(ShapeBuilder::new() 
@@ -139,7 +141,7 @@ fn main() {
     let programs = PrimPrograms::new();
     let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
     
-    let mut draw_list = DrawList::new();
+    let draw_list = DrawList::new();
     //draw_list.add_test_shapes();
     //draw_list.add_random_shapes(&VIEWPORT, 10);
 

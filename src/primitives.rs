@@ -289,7 +289,7 @@ impl Line {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct DrawLine {
     pub p1: Point, 
     pub p2: Point,
@@ -321,7 +321,7 @@ impl Default for DrawLine {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct DrawPolygon {
     pub prim: PrimType,
     pub fill: bool,
@@ -410,7 +410,7 @@ pub trait InBounds {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool;
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Rect {
     //upper left corner, lower right corner
     pub c1: Point, pub c2: Point
@@ -510,13 +510,13 @@ impl InBounds for DrawLine {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum ShapeProps {
     Line(DrawLine),
     Polygon(DrawPolygon)
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Shape {
     pub props: ShapeProps,
     pub color: (u8, u8, u8), //rgb

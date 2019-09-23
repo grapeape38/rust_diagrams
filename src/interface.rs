@@ -127,18 +127,18 @@ pub struct AppState<'a> {
     draw_list: DrawList,
     selection: HashMap<ShapeID, ShapeSelectBox>,
     shape_bar: ShapeBar,
-    click_mode: ClickMode,
     drag_mode: DragMode,
     hover_item: HoverItem,
     draw_ctx: DrawCtx<'a>,
     cursors: CursorMap
+    //click_mode: ClickMode,
 }
 
-#[derive(Clone, Copy)]
+/*#[derive(Clone, Copy)]
 enum ClickMode {
     Select,
     CreateShape {shape_id: ShapeID}
-}
+}*/
 
 #[derive(Clone, Copy)]
 pub enum DragMode {
@@ -150,11 +150,12 @@ pub enum DragMode {
 }
 
 
-#[derive(Clone, Copy)]
+#[derive(PartialEq, Clone)]
 pub enum HoverItem {
    HoverNone,
-   HoverVertex(u32, DragVertex),
-   HoverRect(u32) 
+   HoverVertex(ShapeID, DragVertex),
+   HoverShape(ShapeID, Shape),
+   HoverRect(ShapeID) 
 }
 
 impl<'a> AppState<'a> {
@@ -163,7 +164,7 @@ impl<'a> AppState<'a> {
             draw_list,
             shape_bar: ShapeBar::new(&draw_ctx.viewport),
             selection: HashMap::new(),
-            click_mode: ClickMode::Select,
+            //click_mode: ClickMode::Select,
             drag_mode: DragMode::DragNone,
             hover_item: HoverItem::HoverNone,
             draw_ctx,
@@ -176,39 +177,46 @@ impl<'a> AppState<'a> {
     fn fuzzy_hover_rect(&self, p: &Point, vp: &Point) -> Option<ShapeID> {
         self.selection.iter().find(|(_, r)| r.fuzzy_in_bounds(p, vp)).map(|(id, _)| *id)
     }
-    pub fn handle_select(&mut self, pt: &Point, kmod: &Mod) {
-        let clear_select = (*kmod & Mod::LCTRLMOD) == Mod::NOMOD;
-        let mut use_cursor = SystemCursor::Arrow;
-        if let HoverItem::HoverRect(select_id) = self.hover_item {
-            if self.selection[&select_id].in_bounds(pt, &self.draw_ctx.viewport) {
-                self.drag_mode = DragMode::DragShapes { last_pt: *pt, click_shape: select_id, clear_select };
-                use_cursor = SystemCursor::Hand;
+    pub fn handle_hover_click(&mut self, pt: &Point, clear_select: bool, cursor: &mut SystemCursor) {
+        match self.hover_item {
+            HoverItem::HoverRect(select_id) => {
+                if self.selection[&select_id].in_bounds(pt, &self.draw_ctx.viewport) {
+                    self.drag_mode = DragMode::DragShapes { last_pt: *pt, click_shape: select_id, clear_select };
+                    *cursor = SystemCursor::Hand;
+                }
             }
+            HoverItem::HoverVertex(select_id, drag_vertex) => {
+                self.drag_mode = DragMode::DragResize { click_box: select_id, drag_vertex };
+                *cursor = get_drag_hover_cursor(&drag_vertex);
+            }
+            HoverItem::HoverShape(shape_id, _) => {
+                self.drag_mode = DragMode::CreateShape {shape_id, start_pt: *pt, last_pt: *pt};
+                self.hover_item = HoverItem::HoverNone;
+                *cursor = SystemCursor::Crosshair;
+            }
+            _ => {}
         }
-        else if let HoverItem::HoverVertex(select_id, drag_vertex) = self.hover_item {
-            self.drag_mode = DragMode::DragResize { click_box: select_id, drag_vertex };
-            use_cursor = get_drag_hover_cursor(&drag_vertex);
+    }
+    pub fn handle_select(&mut self, pt: &Point, clear_select: bool, cursor: &mut SystemCursor) {
+        if clear_select {
+            self.selection.clear();
         }
-        else {
-            if clear_select {
-                self.selection.clear();
-            }
-            if let Some(shape_id) = self.shape_bar.click_shape(&pt, &self.draw_ctx.viewport) {
-                self.click_mode = ClickMode::CreateShape { shape_id };
-                use_cursor = SystemCursor::Crosshair;
-            }
-            else if let Some(click_shape) = self.draw_list.click_shape(&pt, &self.draw_ctx.viewport) {
-                let s = self.draw_list.get(&click_shape).unwrap();
-                self.selection.insert(click_shape, self.get_shape_select_box(s));
-                self.drag_mode = DragMode::DragShapes { last_pt: *pt, click_shape, clear_select };
-                self.hover_item = HoverItem::HoverRect(click_shape);
-                use_cursor = SystemCursor::Hand;
-            }
-            else if clear_select {
-                self.drag_mode = DragMode::SelectBox{start_pt: *pt, last_pt: *pt};
-            }
+        if let Some(shape_id) = self.shape_bar.click_shape(&pt, &self.draw_ctx.viewport) {
+            *cursor =  SystemCursor::Crosshair;
+            let r = Rect::new(*pt, *pt);
+            let s = self.shape_bar.get_shape(shape_id, &r, false);
+            self.hover_item = HoverItem::HoverShape(shape_id, s)
         }
-        self.cursors.get(&use_cursor).set();
+        else if let Some(click_shape) = self.draw_list.click_shape(&pt, &self.draw_ctx.viewport) {
+            let s = self.draw_list.get(&click_shape).unwrap();
+            self.selection.insert(click_shape, self.get_shape_select_box(s));
+            self.drag_mode = DragMode::DragShapes { last_pt: *pt, click_shape, clear_select };
+            self.hover_item = HoverItem::HoverRect(click_shape);
+            *cursor = SystemCursor::Hand;
+        }
+        else if clear_select {
+            self.drag_mode = DragMode::SelectBox{start_pt: *pt, last_pt: *pt};
+        }
     }
     fn handle_drag(&mut self, pt: &Point, cursor: &mut SystemCursor) {
         match self.drag_mode {
@@ -239,12 +247,19 @@ impl<'a> AppState<'a> {
             }
             DragMode::CreateShape { ref mut last_pt, .. } => {
                 *last_pt = *pt;
+                *cursor = SystemCursor::Crosshair;
             }
             _ => {}
         }
     }
     fn handle_hover(&mut self, pt: &Point, cursor: &mut SystemCursor) {
-        if let Some(select_id) = self.fuzzy_hover_rect(pt, &self.draw_ctx.viewport) {
+        if let HoverItem::HoverShape(_, ref mut s) = self.hover_item {
+            *cursor = SystemCursor::Crosshair;
+            if let ShapeProps::Polygon(ref mut poly) = s.props {
+                poly.offset = *pt;
+            }
+        }
+        else if let Some(select_id) = self.fuzzy_hover_rect(pt, &self.draw_ctx.viewport) {
             if let Some(drag_vertex) = self.selection[&select_id].get_drag_vertex(pt) {
                 *cursor = get_drag_hover_cursor(&drag_vertex);
                 self.hover_item = HoverItem::HoverVertex(select_id, drag_vertex);
@@ -263,14 +278,15 @@ impl<'a> AppState<'a> {
             Event::MouseButtonDown { mouse_btn, x, y, .. } => {
                 if mouse_btn == sdl2::mouse::MouseButton::Left {
                     let pt = Point{x: x as f32,y: y as f32};
-                    match self.click_mode {
-                        ClickMode::CreateShape { shape_id } => {
-                            self.drag_mode = DragMode::CreateShape {shape_id, start_pt: pt, last_pt: pt}
-                        }
-                        ClickMode::Select => {
-                            self.handle_select(&pt, kmod);
-                        }
+                    let mut use_cursor = SystemCursor::Arrow;
+                    let clear_select = (*kmod & Mod::LCTRLMOD) == Mod::NOMOD;
+                    if self.hover_item != HoverItem::HoverNone {
+                        self.handle_hover_click(&pt, clear_select, &mut use_cursor);
                     }
+                    else {
+                        self.handle_select(&pt, clear_select, &mut use_cursor);
+                    }
+                    self.cursors.get(&use_cursor).set();
                 }
             } 
             Event::MouseButtonUp{mouse_btn, .. } => {
@@ -278,7 +294,7 @@ impl<'a> AppState<'a> {
                     match self.drag_mode {
                         DragMode::DragShapes { click_shape, clear_select, .. } => {
                             if clear_select { 
-                                let s = self.selection[&click_shape];
+                                let s = self.selection[&click_shape].clone();
                                 self.selection.clear();
                                 self.selection.insert(click_shape, s);
                             }
@@ -287,7 +303,6 @@ impl<'a> AppState<'a> {
                             let s = self.shape_bar.get_shape(
                                 shape_id, &Rect::new(start_pt, last_pt), true);
                             self.draw_list.add(s);
-                            self.click_mode = ClickMode::Select;
                         }
                         _ => {}
                     }
@@ -297,9 +312,6 @@ impl<'a> AppState<'a> {
             Event::MouseMotion{ x, y, ..} => {
                 let pt = Point{x:x as f32, y:y as f32};
                 let mut use_cursor = SystemCursor::Arrow;
-                if let ClickMode::CreateShape {..} = self.click_mode {
-                    use_cursor = SystemCursor::Crosshair;
-                }
                 if let DragMode::DragNone = self.drag_mode {
                     self.handle_hover(&pt, &mut use_cursor);
                 }
@@ -309,6 +321,11 @@ impl<'a> AppState<'a> {
                 self.cursors.get(&use_cursor).set();
             }
             _ => {}
+        }
+    }
+    fn draw_hover_item(&self) {
+        if let HoverItem::HoverShape(_, ref shape) = self.hover_item {
+            shape.draw(&self.draw_ctx);
         }
     }
     fn draw_select_box(&self) {
@@ -332,17 +349,18 @@ impl<'a> AppState<'a> {
         unsafe { gl::Clear(gl::COLOR_BUFFER_BIT); }
         self.shape_bar.draw(&self.draw_ctx);
         self.draw_list.draw(&self.draw_ctx);
+        self.draw_hover_item();
         self.draw_select_box();
         self.draw_shape_select_boxes();
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 struct ShapeSelectBox {
     r: Rect
 }
 
-#[derive(Debug, Copy, Clone, FromPrimitive)]
+#[derive(PartialEq, Debug, Copy, Clone, FromPrimitive)]
 pub enum DragVertex {
     TopLeft = 0,
     TopRight = 1,
@@ -427,7 +445,7 @@ impl ShapeSelectBox {
         self.drag_side_swap_vertex(vertex1, vertex2, &mut start.y, &mut min_max.y, &pt.y)
     }
     fn drag_side(&mut self, drag_vertex: &DragVertex, new_pt: &Point) -> DragVertex {
-        let mut r = self.r;
+        let mut r = self.r.clone();
         let new_vtx = match *drag_vertex {
             DragVertex::TopCenter => {
                 self.drag_side_swap_vertex(drag_vertex, &DragVertex::BottomCenter, &mut r.c1.y, &mut r.c2.y, &new_pt.y)
@@ -496,7 +514,7 @@ impl ShapeSelectBox {
         self.draw_drag_circles(draw_ctx);
     }
     fn fuzzy_in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        let mut r = self.r;
+        let mut r = self.r.clone();
         let padding = ShapeSelectBox::MIN_CORNER_DIST as f32;
         r.c1 -= Point {x: padding, y: padding};
         r.c2 += Point {x: padding, y: padding};
@@ -548,8 +566,10 @@ impl ShapeBar {
         }
     }
     fn get_shape(&self, id: ShapeID, r: &Rect, fill: bool) -> Shape {
-        let width = r.width() as u32;
-        let height = r.height() as u32;
+        const DEFAULT_SIZE: u32 = 30;
+        let empty = r.c1 == r.c2;
+        let width = if empty { DEFAULT_SIZE } else { r.width() as u32 };
+        let height = if empty { DEFAULT_SIZE } else { r.height() as u32 };
         let center = r.center();
         let mut props = self.shapes[&id].clone().props; 
         if let ShapeProps::Polygon(mut poly) = props {
