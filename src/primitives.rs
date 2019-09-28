@@ -1,4 +1,4 @@
-use gl::types::{GLuint, GLint, GLchar, GLfloat, GLenum, GLvoid, GLsizeiptr};
+use gl::types::{GLuint, GLint, GLfloat, GLenum, GLvoid, GLsizeiptr};
 extern crate gl;
 extern crate nalgebra_glm;
 use nalgebra_glm as glm;
@@ -7,7 +7,7 @@ use std::ffi::CString;
 use std::f32::{self, consts::PI};
 use PrimType as PT;
 use ShapeProps as SP;
-use crate::render_gl::{Shader, Program};
+use crate::render_gl::{Shader, Program, GChar, SendUniforms, SendUniform};
 
 type PrimMap = HashMap<PrimType, GLuint>;
 
@@ -83,28 +83,29 @@ impl PrimType {
         match self {
             PT::Triangle => { //isosceles
                 vec![
-                    -0.5, -0.5,
-                    0.5, -0.5,
-                    0.0, 0.5,
+                    0., 1.0,
+                    1.0, 1.0,
+                    0.5, 0.
                 ]
             },
             PT::Circle => {
-                let mut v = vec![0.0, 0.0];
+                let mut v = vec![0.5, 0.5];
                 v.extend(PT::Ring.verts());
                 v
             },
             PT::Ring => {
                 let n = NCIRCLE_VERTS as f32;
                 (0..NCIRCLE_VERTS).map(|i| 
-                    vec![0.5 * f32::cos(2.*PI*i as f32 / (n-1.)), 0.5 * f32::sin(2.*PI*i as f32 / (n-1.))]
+                    vec![0.5 + 0.5 * f32::cos(2.*PI*i as f32 / (n-1.)), 
+                         0.5 + 0.5 * f32::sin(2.*PI*i as f32 / (n-1.))]
                 ).flatten().collect()
             }
             PT::Rect => {
                vec![ 
-                    -0.5, -0.5,
-                    -0.5, 0.5,
-                    0.5, 0.5,
-                    0.5, -0.5
+                    0.0, 0.0,
+                    1.0, 0.0, 
+                    1.0, 1.0,
+                    0.0, 1.0
                 ]
             },
             PT::Line => {
@@ -136,13 +137,13 @@ impl PrimType {
     fn in_bounds(&self, p: &Point) -> bool {
         match self {
             PT::Triangle => {
-                p.x >= -0.5 && p.x <= 0.5 && p.y >= -0.5 && p.y <= (0.5 - f32::abs(p.x))
+                p.x >= 0.0 && p.x <= 1.0 && p.y >= f32::abs(p.x - 0.5) && p.y <= 1.0
             }
             PT::Circle | PT::Ring => {
-                p.mag() <= 0.5
+                (*p - Point{x: 0.5, y: 0.5}).mag() <= 0.5
             }
             PT::Rect => {
-                p.x >= -0.5 && p.x <= 0.5 && p.y >= -0.5 && p.y <= 0.5 
+                p.x >= 0.0 && p.x <= 1.0 && p.y >= 0.0 && p.y <= 1.0 
             }
             PT::Line => {
                 false
@@ -192,6 +193,15 @@ impl Point {
     pub fn dist(&self, p2: &Point) -> f32 {
         let d = *self - *p2;
         d.mag()
+    }
+    pub fn to_vec2(&self) -> glm::Vec2 {
+        glm::vec2(self.x, self.y)
+    }
+    pub fn to_vec3(&self) -> glm::Vec3 {
+        glm::vec3(self.x, self.y, 0.)
+    }
+    pub fn to_vec4(&self) -> glm::Vec4 {
+        glm::vec4(self.x, self.y, 0., 1.)
     }
 }
 
@@ -351,58 +361,63 @@ impl DrawPolygon {
             ..DrawPolygon::default()
         }
     }
+    pub fn set_center(&mut self, pt: &Point) {
+        self.offset = *pt - Point { x: self.width as f32 / 2., y: self.height as f32 / 2. };
+    }
 }
 
-struct PolyTransform(glm::Mat3);
+#[derive(SendUniforms)]
+struct PolyTransform {
+    projection: glm::Mat4,
+    model: glm::Mat4,
+}
     
 #[allow(dead_code)]
 impl PolyTransform {
     fn new(s: &DrawPolygon, vp: &Point) -> Self {
+        let projection = glm::ortho(0., vp.x, vp.y, 0., -1., 1.);
         let rad = 180. * s.rot / PI;
-        let sc = Point{ 
-          x: 2. * s.width as f32 * (f32::cos(rad) + f32::sin(rad)) / vp.x,
-          y: 2. * s.height as f32 * (f32::cos(rad) + f32::sin(rad)) / vp.y
-        };
-        let mut trans = glm::translate2d(&glm::identity(), &pixels_to_trans_vec(&s.offset, vp));
-        trans = glm::rotate2d(&trans, rad);
-        trans = glm::scale2d(&trans, &glm::vec2(sc.x, sc.y));
-        PolyTransform(trans)
+        let mut model = glm::translate(&glm::identity(), &s.offset.to_vec3());
+
+        model = glm::translate(&model, 
+            &glm::vec3(0.5 * s.width as f32, 0.5 * s.height as f32, 0.));
+        model = glm::rotate(&model, rad, &glm::vec3(0., 0., 1.));
+        model = glm::translate(&model, 
+            &glm::vec3(-0.5 * s.width as f32, -0.5 * s.height as f32, 0.));
+
+        model = glm::scale(&model, &glm::vec3(s.width as f32, s.height as f32, 1.));
+        PolyTransform {projection, model}
     }
-    fn inv(&self) -> glm::Mat3 {
-        glm::inverse(&self.0)
+    fn get(&self) -> glm::Mat4 {
+        self.projection * self.model
+    }
+    fn transform(&self, coords: &glm::Vec4) -> glm::Vec4 {
+        self.get() * coords
+    }
+    fn pixels_to_coords(&self, pt: &Point) -> glm::Vec4{
+        self.projection * pt.to_vec4()
+    }
+    fn coords_to_pixels(&self, coords: &glm::Vec4) -> Point {
+        let px = glm::inverse(&self.projection) * coords;
+        Point {x: px[0], y: px[1]}
+    }
+    fn inv(&self) -> glm::Mat4 {
+        glm::inverse(&self.get())
     }
 }
 
+#[derive(SendUniforms)]
 struct LineTransform {
-    p1c: glm::Vec2, p2c: glm::Vec2
+    point1: glm::Vec2, point2: glm::Vec2, projection: glm::Mat4
 }
 
 impl LineTransform {
     fn new(l: &DrawLine, vp: &Point) -> Self {
         LineTransform {
-            p1c: pixels_to_trans_vec(&l.p1, vp),
-            p2c: pixels_to_trans_vec(&l.p2, vp)
+            point1: l.p1.to_vec2(),
+            point2: l.p2.to_vec2(),
+            projection: glm::ortho(0., vp.x, vp.y, 0., -1., 1.)
         }
-    }
-}
-
-trait Transform {
-    unsafe fn send_uniforms(&self, prog_id: GLuint); 
-}
-
-impl Transform for PolyTransform {
-    unsafe fn send_uniforms(&self, prog_id: GLuint) {
-        let trans_loc = gl::GetUniformLocation(prog_id, GChar::new("transform").ptr());
-        gl::UniformMatrix3fv(trans_loc, 1, gl::FALSE, self.0.as_ptr());
-    }
-}
-
-impl Transform for LineTransform {
-    unsafe fn send_uniforms(&self, prog_id: GLuint) {
-        let p1_loc = gl::GetUniformLocation(prog_id, GChar::new("point1").ptr());
-        gl::Uniform2f(p1_loc, self.p1c.x, self.p1c.y);
-        let p2_loc = gl::GetUniformLocation(prog_id, GChar::new("point2").ptr());
-        gl::Uniform2f(p2_loc, self.p2c.x, self.p2c.y);
     }
 }
 
@@ -432,8 +447,8 @@ impl Rect {
         Rect {c1: min_pt, c2: max_pt}
     }
     pub fn builder(&self) -> ShapeBuilder {
-        let center = self.center();
-        ShapeBuilder::new().rect(self.width() as u32, self.height() as u32).offset(center.x as i32, center.y as i32)
+        ShapeBuilder::new().rect(self.width() as u32, self.height() as u32)
+            .offset(self.c1.x as i32, self.c1.y as i32)
     }
     pub fn center(&self) -> Point {
         (self.c1 + self.c2) / 2.
@@ -482,9 +497,8 @@ impl InBounds for Rect {
 
 impl InBounds for DrawPolygon {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        let trans_inv = PolyTransform::new(self, vp).inv();
-        let pc = pixels_to_trans_vec(p, vp);
-        let normpt = trans_inv * glm::vec3(pc.x, pc.y, 1.0);
+        let trans = PolyTransform::new(self, vp);
+        let normpt = trans.inv() * trans.pixels_to_coords(p);
         self.prim.in_bounds(&Point {x: normpt.x, y: normpt.y})
     }
 }
@@ -543,10 +557,10 @@ impl Shape {
     pub fn verts(&self, vp: &Point) -> Vec<Point> {
         match &self.props {
             SP::Polygon(ref draw_poly) => {
-                let trans = PolyTransform::new(&draw_poly, vp).0;
+                let trans = PolyTransform::new(&draw_poly, vp);
                 let v = self.prim_type().verts().chunks(2).map(|s| { 
-                    let v = trans * glm::vec3(s[0], s[1], 1.0);
-                    coords_to_pixels(&Point{x:v[0],y:v[1]}, vp)
+                    let v = trans.transform(&glm::vec4(s[0], s[1], 0.0, 1.0));
+                    trans.coords_to_pixels(&v)
                 }).collect();
                 v
             }
@@ -555,7 +569,7 @@ impl Shape {
             }
         }
     }
-    fn transform(&self, vp: &Point) -> Box<dyn Transform> {
+    fn transform(&self, vp: &Point) -> Box<dyn SendUniforms> {
         match &self.props {
             SP::Polygon(draw_poly) => Box::new(PolyTransform::new(&draw_poly, vp)),
             SP::Line(draw_line) => Box::new(LineTransform::new(&draw_line, vp))
@@ -575,7 +589,7 @@ impl Shape {
             unsafe { gl::PolygonMode(gl::FRONT_AND_BACK, poly_mode); }
         }
         unsafe {
-            trans.send_uniforms(prog_id);
+            trans.send_uniforms(prog_id).unwrap();
             let color_loc = gl::GetUniformLocation(prog_id, GChar::new("color").ptr());
             gl::Uniform4f(color_loc, color.0, color.1, color.2, self.alpha);
             gl::LineWidth(line_width as GLfloat);
@@ -583,17 +597,6 @@ impl Shape {
             gl::DrawArrays(self.mode(), 0, self.size());
         }
     }
-    /*pub fn get_offset(&self, vp: &Point) -> Point {
-        match &self.props {
-            SP::Polygon(draw_poly) => {
-                draw_poly.offset.0
-            }
-            SP::Line(draw_line) => {
-                let mp = (draw_line.p1 + draw_line.p2) / 2.;
-                pixels_to_coords(&mp, vp)
-            }
-        }
-    }*/
     pub fn prim_type(&self) -> PrimType {
         match &self.props {
             SP::Polygon(draw_poly) => draw_poly.prim,
@@ -733,32 +736,5 @@ impl LineBuilder {
 
 pub fn rgb_to_f32(rgb: &(u8, u8, u8)) -> (f32, f32, f32) {
     (rgb.0 as f32 / 255., rgb.1 as f32 / 255., rgb.2 as f32 / 255.)
-}
-
-fn pixels_to_trans_vec(pixels: &Point, vp: &Point) -> glm::Vec2 {
-    let coords = pixels_to_coords(pixels, vp);
-    glm::vec2(coords.x, coords.y)
-}
-
-fn pixels_to_coords(pixels: &Point, vp: &Point) -> Point {
-    Point {x: -1. + 2. * pixels.x  / vp.x , y: 1. - 2. * pixels.y  / vp.y}
-}
-
-#[allow(dead_code)]
-fn coords_to_pixels(coords: &Point, vp: &Point) -> Point {
-    Point {x: vp.x as f32 * (coords.x + 1.) / 2., y: vp.y as f32 * (1. - coords.y) / 2.}
-}
-
-struct GChar {
-    cstr: CString
-}
-
-impl GChar {
-    fn new(s: &str) -> GChar {
-        GChar { cstr:  CString::new(s.as_bytes()).unwrap() }
-    }
-    fn ptr(&self) -> *const GLchar {
-        self.cstr.as_ptr() as *const GLchar
-    }
 }
 

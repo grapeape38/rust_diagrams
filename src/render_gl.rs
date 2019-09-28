@@ -1,7 +1,9 @@
 extern crate gl;
+extern crate nalgebra_glm;
+use nalgebra_glm as glm;
+
 use gl::types::{GLuint, GLint, GLenum, GLchar};
 use std::ffi::{CString, CStr};
-
 
 pub struct Program {
     id: GLuint
@@ -102,9 +104,72 @@ fn shader_from_source(source: &CStr, kind: GLuint) -> Result<GLuint, String> {
     Ok(id)
 }
 
-
 fn create_whitespace_cstring_with_len(len: usize) -> CString {
     let mut buf: Vec<u8> = Vec::with_capacity(len as usize + 1);
     buf.extend([b' '].iter().cycle().take(len as usize));
     unsafe { CString::from_vec_unchecked(buf) }
 }
+
+pub struct GChar {
+    cstr: CString
+}
+
+impl GChar {
+    pub fn new(s: &str) -> GChar {
+        GChar { cstr:  CString::new(s.as_bytes()).unwrap() }
+    }
+    pub fn ptr(&self) -> *const GLchar {
+        self.cstr.as_ptr() as *const GLchar
+    }
+}
+
+pub trait SendUniform {
+    fn send_uniform(&self, prog_id: GLuint, name: &str) -> Result<(), String> {
+        unsafe {
+            let loc = get_uniform_location(prog_id, name)?;
+            self.uniform(loc);
+        }
+        Ok(())
+    }
+    unsafe fn uniform(&self, loc: GLint);
+}
+
+pub trait SendUniforms {
+    fn send_uniforms(&self, prog_id: GLuint) -> Result<(), String>;
+}
+
+unsafe fn get_uniform_location(prog_id: GLuint, name: &str) -> Result<i32, String>
+{
+    let loc = gl::GetUniformLocation(prog_id, GChar::new(name).ptr());
+    if loc < 0 {
+        return Err("Could not get uniform location".to_string());
+    }
+    return Ok(loc)
+}
+
+impl SendUniform for glm::Vec2 {
+    unsafe fn uniform(&self, loc: GLint) {
+        gl::Uniform2fv(loc, 1, self.as_ptr()); 
+    }
+}
+
+impl SendUniform for glm::Vec4 {
+    unsafe fn uniform(&self, loc: GLint) {
+        gl::Uniform4fv(loc, 1, self.as_ptr()); 
+    }
+}
+
+impl SendUniform for glm::Mat3 {
+    unsafe fn uniform(&self, loc: GLint) {
+        gl::UniformMatrix3fv(loc, 1, gl::FALSE, self.as_ptr()); 
+    }
+}
+
+impl SendUniform for glm::Mat4 {
+    unsafe fn uniform(&self, loc: GLint) {
+        gl::UniformMatrix4fv(loc, 1, gl::FALSE, self.as_ptr()); 
+    }
+}
+
+
+

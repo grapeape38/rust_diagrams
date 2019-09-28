@@ -63,9 +63,9 @@ impl Shape {
     fn drag_side(&mut self, r: &Rect) {
         match self.props {
             SP::Polygon(ref mut draw_poly) => {
+                draw_poly.offset = r.c1;
                 draw_poly.width = r.width() as u32;
                 draw_poly.height = r.height() as u32;
-                draw_poly.offset = r.center();
             }
             SP::Line(ref mut draw_line) => {
                 *draw_line.min_x() = *r.min_x();
@@ -256,7 +256,7 @@ impl<'a> AppState<'a> {
         if let HoverItem::HoverShape(_, ref mut s) = self.hover_item {
             *cursor = SystemCursor::Crosshair;
             if let ShapeProps::Polygon(ref mut poly) = s.props {
-                poly.offset = *pt;
+                poly.set_center(pt);
             }
         }
         else if let Some(select_id) = self.fuzzy_hover_rect(pt, &self.draw_ctx.viewport) {
@@ -504,8 +504,10 @@ impl ShapeSelectBox {
         points
     }
     fn draw_drag_circles(&self, draw_ctx: &DrawCtx) {
+        let radi = 7.;
         self.get_drag_points().iter()
-            .map(|v| ShapeBuilder::new().color(255,255,255).circle(7).offset(v.x as i32, v.y as i32).get())
+            .map(|v| ShapeBuilder::new().color(255,255,255).circle(radi as u32)
+                .offset((v.x - radi/2.) as i32, (v.y - radi/2.) as i32).get())
             .for_each(|s| s.draw(draw_ctx));
     } 
     fn draw(&self, draw_ctx: &DrawCtx) {
@@ -550,11 +552,11 @@ impl ShapeBar {
             let mut poly = DrawPolygon::from_prim(*s);
             poly.width = 30;
             poly.height = 30;
-            poly.offset = Point {
+            poly.set_center(&Point {
                 x: shapes_rect.c1.x +
                     (i as u32 * shapes_rect.width() as u32 / (npoly - 1)) as f32,
                 y: shapes_rect.center().y
-            };
+            });
             let mut shape = Shape::from_props(ShapeProps::Polygon(poly));
             shape.color = (255,0,0);
             shapes.insert(i as u32, shape);
@@ -570,17 +572,15 @@ impl ShapeBar {
         let empty = r.c1 == r.c2;
         let width = if empty { DEFAULT_SIZE } else { r.width() as u32 };
         let height = if empty { DEFAULT_SIZE } else { r.height() as u32 };
-        let center = r.center();
+        let mut offset = r.c1;
+        if empty {
+            offset -= Point { x: width as f32 / 2., y: height as f32 / 2. }; //center
+        }
         let mut props = self.shapes[&id].clone().props; 
-        if let ShapeProps::Polygon(mut poly) = props {
-            poly.offset = center;
-            poly.width = width;
-            poly.height = height;
-            poly.fill = fill;
-            if !fill && poly.prim == PrimType::Circle {
-                poly.prim = PrimType::Ring
-            }
-            props = ShapeProps::Polygon(poly);
+        if let ShapeProps::Polygon(ref poly) = props {
+            let prim = if !fill && poly.prim == PrimType::Circle { PrimType::Ring } else { poly.prim };
+            props = ShapeProps::Polygon(
+                DrawPolygon { width, height, offset, fill, prim, ..DrawPolygon::default()});
         }
         let mut s = Shape::from_props(props);
         s.color = (255, 0, 0);
