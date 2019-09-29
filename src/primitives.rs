@@ -270,6 +270,13 @@ impl std::ops::Div<f32> for Point {
     }
 }
 
+impl std::ops::Div<Point> for Point {
+    type Output = Point;
+    fn div(self, rhs: Point) -> Self {
+        Point {x: self.x / rhs.x, y: self.y / rhs.y}
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct RotateRect {
     pub offset: Point,
@@ -281,8 +288,25 @@ impl RotateRect {
     pub fn new(offset: Point, size: Point, rot: f32) -> Self {
         RotateRect { offset, size, rot }
     }
+    pub fn drag(&mut self, offset: &Point) {
+        self.offset += *offset;
+    }
     pub fn set_center(&mut self, pt: &Point) {
         self.offset = *pt - (self.size / 2.);
+    }
+    pub fn verts(&self, vp: &Point) -> Vec<Point>  {
+        self.to_poly().verts(vp)
+    }
+    pub fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
+        self.to_poly().in_bounds(p, vp)
+    }
+    pub fn builder(&self) -> ShapeBuilder {
+        ShapeBuilder { p: self.to_poly(), ..ShapeBuilder::new() }
+    }
+    pub fn to_poly(&self) -> DrawPolygon {
+        DrawPolygon {
+            prim: PrimType::Rect, rect: self.clone(), fill: false
+        }
     }
 }
 
@@ -390,6 +414,13 @@ impl DrawPolygon {
             ..DrawPolygon::default()
         }
     }
+    pub fn verts(&self, vp: &Point) -> Vec<Point> {
+        let trans = RectTransform::new(&self.rect, vp);
+        let v = self.prim.verts().chunks(2).map(|s| { 
+            trans.model_to_pixel(&glm::vec4(s[0], s[1], 0.0, 1.0))
+        }).collect();
+        v
+    }
 }
 
 #[derive(SendUniforms)]
@@ -420,6 +451,21 @@ impl RectTransform {
     }
     pub fn pixel_to_model(&self, pt: &Point) -> glm::Vec4 {
         glm::inverse(&self.model) * pt.to_vec4() 
+    }
+    pub fn model_rect_to_screen(&self, model_rect: &Rect,  old_rect: &RotateRect) -> RotateRect {
+        let size = old_rect.size * model_rect.size();
+        let rot = old_rect.rot;
+        let rad = 180. * old_rect.rot / PI;
+
+        let mut model = glm::translate(&glm::identity(), &(size / 2.).to_vec3());
+        model = glm::rotate(&model, rad, &glm::vec3(0., 0., 1.));
+        model = glm::translate(&model, &(-size / 2.).to_vec3());
+        model = glm::scale(&model, &glm::vec3(size.x, size.y, 1.));
+
+        let new_corner = self.model_to_pixel(&model_rect.c1.to_vec4());
+        let new_origin: Point = (model * Point::origin().to_vec4()).into();
+        let offset = new_corner - new_origin;
+        RotateRect { offset, size, rot }
     }
     pub fn model_to_pixel(&self, coords: &glm::Vec4) -> Point {
         (self.model * coords).into()
@@ -488,6 +534,9 @@ impl Rect {
     pub fn height(&self) -> f32 {
         f32::abs(self.c2.y - self.c1.y)
     }
+    pub fn size(&self) -> Point {
+        Point::new(self.width(), self.height())
+    }
     pub fn verts(&self) -> Vec<Point> {
         vec![self.c1, 
              self.ur(),
@@ -511,10 +560,6 @@ impl Rect {
     }
     pub fn max_y(&self) -> &f32 {
         &self.c2.y
-    }
-    pub fn to_model(&self, trans: &RectTransform) -> Rect {
-        Rect::new(trans.pixel_to_model(&self.c1).into(), 
-                  trans.pixel_to_model(&self.c2).into())
     }
 }
 
@@ -587,11 +632,7 @@ impl Shape {
     pub fn verts(&self, vp: &Point) -> Vec<Point> {
         match &self.props {
             SP::Polygon(ref draw_poly) => {
-                let trans = RectTransform::new(&draw_poly.rect, vp);
-                let v = self.prim_type().verts().chunks(2).map(|s| { 
-                    trans.model_to_pixel(&glm::vec4(s[0], s[1], 0.0, 1.0))
-                }).collect();
-                v
+                draw_poly.verts(vp)
             }
             SP::Line(draw_line) => {
                 vec![draw_line.p1, draw_line.p2]

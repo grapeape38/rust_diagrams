@@ -25,7 +25,7 @@ fn rand_color() -> (u8, u8, u8) {
 #[allow(dead_code)]
 impl DrawList {
     fn add_test_lines(&mut self) {
-         self.add(LineBuilder::new()
+        self.add(LineBuilder::new()
             .points(200.,200.,400.,400.)
             .color(0, 255, 255).line_width(6.).get()
         );
@@ -36,6 +36,26 @@ impl DrawList {
         self.add(LineBuilder::new()
             .points(400.,200.,400.,400.)
             .color(255, 0, 0).get()
+        );
+    }
+    fn add_rotated_shapes(&mut self) {
+        self.add(ShapeBuilder::new() 
+            .square(200)
+            .offset(300,100)
+            .rot(45.)
+            .color(255, 255, 255).get()
+        );
+        self.add(ShapeBuilder::new()
+            .square(150)
+            .color(200,100,200)
+            .rot(30.)
+            .offset(600,200).get()
+        );
+        self.add(ShapeBuilder::new() 
+            .tri(100, 100)
+            .offset(200,200)
+            .rot(60.)
+            .color(0, 255, 0).get()
         );
     }
     fn add_test_shapes(&mut self) {
@@ -60,19 +80,6 @@ impl DrawList {
             .ellipse(200, 100)
             .offset(400,400)
             .color(255, 255, 0).get()
-        );
-        self.add(ShapeBuilder::new() 
-            .square(200)
-            .offset(600,600)
-            .rot(45.)
-            .color(255, 255, 255).get()
-        );
-
-        self.add(ShapeBuilder::new()
-            .square(150)
-            .color(200,100,200)
-            .rot(30.)
-            .offset(600,200).get()
         );
     }
     fn add_random_shapes(&mut self, vp: &Point, n: u8) {
@@ -145,7 +152,7 @@ fn main() {
     let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
     
     let mut draw_list = DrawList::new();
-    draw_list.add_test_shapes();
+    draw_list.add_rotated_shapes();
     //draw_list.add_test_lines();
     //draw_list.add_random_shapes(&VIEWPORT, 10);
     //let draw_list = DrawList::new();
