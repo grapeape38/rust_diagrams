@@ -151,11 +151,12 @@ fn main() {
     let programs = PrimPrograms::new();
     let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
     
-    let mut draw_list = DrawList::new();
-    draw_list.add_rotated_shapes();
+    //let mut draw_list = DrawList::new();
+    //draw_list.add_rotated_shapes();
     //draw_list.add_test_lines();
     //draw_list.add_random_shapes(&VIEWPORT, 10);
-    //let draw_list = DrawList::new();
+
+    let draw_list = DrawList::new();
 
     let mut app_state = AppState::new(draw_list, draw_ctx);
 
@@ -178,6 +179,9 @@ fn main() {
                 }
                 Event::Quit {..} | 
                 Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'main,
+                ev @ Event::KeyDown {..} => {
+                    app_state.handle_keyboard_event(&ev);
+                }
                 _ => {},
             }
             app_state.render();

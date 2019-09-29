@@ -7,7 +7,7 @@ use std::ffi::CString;
 use std::f32::{self, consts::PI};
 use PrimType as PT;
 use ShapeProps as SP;
-use crate::render_gl::{Shader, Program, GChar, SendUniforms, SendUniform};
+use crate::render_gl::{Shader, Program, SendUniforms, SendUniform};
 
 type PrimMap = HashMap<PrimType, GLuint>;
 
@@ -291,6 +291,13 @@ impl RotateRect {
     pub fn drag(&mut self, offset: &Point) {
         self.offset += *offset;
     }
+    pub fn center(&self, vp: &Point) -> Point {
+        self.verts(vp).iter().fold(Point::origin(), |acc, curr| { acc + *curr }) / 4.
+    }
+    pub fn set_radians(&mut self, mut radians: f32) {
+        radians -= 2. * PI * (radians / 2. / PI).floor();
+        self.rot = radians * PI / 180.;
+    }
     pub fn set_center(&mut self, pt: &Point) {
         self.offset = *pt - (self.size / 2.);
     }
@@ -506,6 +513,7 @@ impl Default for Rect {
     }
 }
 
+#[allow(dead_code)]
 impl Rect {
     pub fn new(c1: Point, c2: Point) -> Self {
         Rect::bounding_box(&[c1, c2])
