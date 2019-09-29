@@ -35,6 +35,7 @@ impl Rect {
     }
 }
 
+#[allow(dead_code)]
 impl Shape {
     fn drag(&mut self, off: &Point) {
         match self.props {
@@ -43,7 +44,7 @@ impl Shape {
                 draw_line.p2 += *off;
             }
             SP::Polygon(ref mut draw_poly) => {
-                draw_poly.offset += *off;
+                draw_poly.rect.offset += *off;
             }
         }
     }
@@ -60,12 +61,19 @@ impl Shape {
     fn in_select_box(&self, r: &Rect, vp: &Point) -> bool {
         self.verts(&vp).iter().any(|v| r.in_bounds(v, vp))
     }
+    fn set_rect(&mut self, r: &RotateRect) {
+        match self.props {
+            SP::Polygon(ref mut draw_poly) => {
+                draw_poly.rect = r.clone();
+            }
+            SP::Line(_) => { }
+        }
+    }
     fn drag_side(&mut self, r: &Rect) {
         match self.props {
             SP::Polygon(ref mut draw_poly) => {
-                draw_poly.offset = r.c1;
-                draw_poly.width = r.width() as u32;
-                draw_poly.height = r.height() as u32;
+                draw_poly.rect.offset = r.c1;
+                draw_poly.rect.size = Point::new(r.width(), r.height());
             }
             SP::Line(ref mut draw_line) => {
                 *draw_line.min_x() = *r.min_x();
@@ -172,7 +180,7 @@ impl<'a> AppState<'a> {
         }
     }
     fn get_shape_select_box(&self, s: &Shape) -> ShapeSelectBox {
-        ShapeSelectBox::new(Rect::bounding_box(&s.verts(&self.draw_ctx.viewport)))
+        ShapeSelectBox(Rect::bounding_box(&s.verts(&self.draw_ctx.viewport)))
     }
     fn fuzzy_hover_rect(&self, p: &Point, vp: &Point) -> Option<ShapeID> {
         self.selection.iter().find(|(_, r)| r.fuzzy_in_bounds(p, vp)).map(|(id, _)| *id)
@@ -242,7 +250,7 @@ impl<'a> AppState<'a> {
                 *drag_vertex = self.selection.get_mut(&click_box).map(|s| s.drag_side(&drag_vertex, &pt))
                     .unwrap_or(*drag_vertex);
                 if let Some(ref sbox) = self.selection.get(&click_box) {
-                    self.draw_list.get_mut(&click_box).map(|s| s.drag_side(&sbox.r.clone()));
+                    self.draw_list.get_mut(&click_box).map(|s| s.drag_side(&sbox.0.clone()));
                 }
             }
             DragMode::CreateShape { ref mut last_pt, .. } => {
@@ -256,7 +264,7 @@ impl<'a> AppState<'a> {
         if let HoverItem::HoverShape(_, ref mut s) = self.hover_item {
             *cursor = SystemCursor::Crosshair;
             if let ShapeProps::Polygon(ref mut poly) = s.props {
-                poly.set_center(pt);
+                poly.rect.set_center(pt);
             }
         }
         else if let Some(select_id) = self.fuzzy_hover_rect(pt, &self.draw_ctx.viewport) {
@@ -347,7 +355,7 @@ impl<'a> AppState<'a> {
     }
     pub fn render(&self) {
         unsafe { gl::Clear(gl::COLOR_BUFFER_BIT); }
-        self.shape_bar.draw(&self.draw_ctx);
+        //self.shape_bar.draw(&self.draw_ctx);
         self.draw_list.draw(&self.draw_ctx);
         self.draw_hover_item();
         self.draw_select_box();
@@ -356,9 +364,7 @@ impl<'a> AppState<'a> {
 }
 
 #[derive(Clone)]
-struct ShapeSelectBox {
-    r: Rect
-}
+struct ShapeSelectBox(Rect);
 
 #[derive(PartialEq, Debug, Copy, Clone, FromPrimitive)]
 pub enum DragVertex {
@@ -391,12 +397,9 @@ fn get_drag_hover_cursor(drag_vertex: &DragVertex) -> SystemCursor {
 
 impl ShapeSelectBox {
     const MIN_CORNER_DIST: u32 = 10;
-    fn new(r: Rect) -> Self {
-        ShapeSelectBox { r }
-    }
 
     fn drag(&mut self, off: &Point) {
-        self.r.drag(off);
+        self.0.drag(off);
     }
 
     fn drag_side_swap_vertex(&mut self, vertex1: &DragVertex, vertex2: &DragVertex, start: &mut f32, min_max: &mut f32, new: &f32) 
@@ -445,7 +448,7 @@ impl ShapeSelectBox {
         self.drag_side_swap_vertex(vertex1, vertex2, &mut start.y, &mut min_max.y, &pt.y)
     }
     fn drag_side(&mut self, drag_vertex: &DragVertex, new_pt: &Point) -> DragVertex {
-        let mut r = self.r.clone();
+        let mut r = self.0.clone();
         let new_vtx = match *drag_vertex {
             DragVertex::TopCenter => {
                 self.drag_side_swap_vertex(drag_vertex, &DragVertex::BottomCenter, &mut r.c1.y, &mut r.c2.y, &new_pt.y)
@@ -484,7 +487,7 @@ impl ShapeSelectBox {
                 self.drag_side_swap_vertex(drag_vertex, &DragVertex::TopRight, &mut r.c2.y, &mut r.c1.y, &pt.y)
             }
         };
-        self.r = r;
+        self.0 = r;
         new_vtx
     }
 
@@ -496,7 +499,7 @@ impl ShapeSelectBox {
 
     #[inline]
     fn get_drag_points(&self) -> Vec<Point> {
-        let mut points = self.r.verts();
+        let mut points = self.0.verts();
         points.push((points[0] + points[1]) / 2.);
         points.push((points[1] + points[2]) / 2.);
         points.push((points[2] + points[3]) / 2.);
@@ -512,11 +515,11 @@ impl ShapeSelectBox {
     } 
     fn draw(&self, draw_ctx: &DrawCtx) {
         //draw box
-        self.r.builder().color(255,255,255).fill(false).get().draw(draw_ctx);
+        self.0.builder().color(255,255,255).fill(false).get().draw(draw_ctx);
         self.draw_drag_circles(draw_ctx);
     }
     fn fuzzy_in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        let mut r = self.r.clone();
+        let mut r = self.0.clone();
         let padding = ShapeSelectBox::MIN_CORNER_DIST as f32;
         r.c1 -= Point {x: padding, y: padding};
         r.c2 += Point {x: padding, y: padding};
@@ -526,7 +529,7 @@ impl ShapeSelectBox {
 
 impl InBounds for ShapeSelectBox {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        self.r.in_bounds(p, vp)
+        self.0.in_bounds(p, vp)
     }
 }
 
@@ -550,15 +553,14 @@ impl ShapeBar {
         let npoly = ptypes.len() as u32;
         for (i, s) in ptypes.iter().enumerate() {
             let mut poly = DrawPolygon::from_prim(*s);
-            poly.width = 30;
-            poly.height = 30;
-            poly.set_center(&Point {
+            poly.rect.size = Point::new(30.,30.);
+            poly.rect.set_center(&Point {
                 x: shapes_rect.c1.x +
                     (i as u32 * shapes_rect.width() as u32 / (npoly - 1)) as f32,
                 y: shapes_rect.center().y
             });
             let mut shape = Shape::from_props(ShapeProps::Polygon(poly));
-            shape.color = (255,0,0);
+            shape.color = rgb_to_f32(255,0,0);
             shapes.insert(i as u32, shape);
         }
         ShapeBar {
@@ -568,22 +570,24 @@ impl ShapeBar {
         }
     }
     fn get_shape(&self, id: ShapeID, r: &Rect, fill: bool) -> Shape {
-        const DEFAULT_SIZE: u32 = 30;
+        const DEFAULT_SIZE: f32 = 30.;
         let empty = r.c1 == r.c2;
-        let width = if empty { DEFAULT_SIZE } else { r.width() as u32 };
-        let height = if empty { DEFAULT_SIZE } else { r.height() as u32 };
-        let mut offset = r.c1;
+        let size = 
+            if empty { Point::new(DEFAULT_SIZE, DEFAULT_SIZE) }
+            else { Point::new(r.width(), r.height()) };
+        let offset = r.c1;
+        let mut rect = RotateRect::new(offset, size, 0.);
         if empty {
-            offset -= Point { x: width as f32 / 2., y: height as f32 / 2. }; //center
+            rect.set_center(&offset);
         }
         let mut props = self.shapes[&id].clone().props; 
         if let ShapeProps::Polygon(ref poly) = props {
             let prim = if !fill && poly.prim == PrimType::Circle { PrimType::Ring } else { poly.prim };
             props = ShapeProps::Polygon(
-                DrawPolygon { width, height, offset, fill, prim, ..DrawPolygon::default()});
+                DrawPolygon { rect, fill, prim, ..DrawPolygon::default()});
         }
         let mut s = Shape::from_props(props);
-        s.color = (255, 0, 0);
+        s.color = rgb_to_f32(255, 0, 0);
         s
     }
     fn click_shape(&mut self, p: &Point, vp: &Point) -> Option<ShapeID> {

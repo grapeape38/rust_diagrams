@@ -182,10 +182,19 @@ pub struct Point {
     pub y: f32
 }
 
+impl From<glm::Vec4> for Point {
+    fn from(v: glm::Vec4) -> Point {
+        Point {x: v[0], y: v[1]}
+    }
+}
+
 #[allow(dead_code)]
 impl Point {
-    pub fn new() -> Point {
-        Point {x:0., y:0.}
+    pub fn origin() -> Point {
+        Point::new(0.,0.)
+    }
+    pub fn new(x: f32, y: f32) -> Point {
+        Point {x, y}
     }
     pub fn mag(&self) -> f32 {
         f32::sqrt((self.x*self.x + self.y*self.y) as f32)
@@ -261,6 +270,32 @@ impl std::ops::Div<f32> for Point {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub struct RotateRect {
+    pub offset: Point,
+    pub size: Point,
+    pub rot: f32,
+}
+
+impl RotateRect {
+    pub fn new(offset: Point, size: Point, rot: f32) -> Self {
+        RotateRect { offset, size, rot }
+    }
+    pub fn set_center(&mut self, pt: &Point) {
+        self.offset = *pt - (self.size / 2.);
+    }
+}
+
+impl Default for RotateRect {
+    fn default() -> Self {
+        RotateRect {
+            offset: Point::origin(),
+            size: Point::new(5.,5.),
+            rot: 0.
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Line {
     a: f32, b: f32, c: f32 
@@ -324,8 +359,8 @@ impl DrawLine {
 impl Default for DrawLine {
     fn default() -> DrawLine {
         DrawLine {
-            p1: Point::new(),
-            p2: Point::new(),
+            p1: Point::origin(),
+            p2: Point::origin(),
             line_width: 3.
         }
     }
@@ -335,21 +370,15 @@ impl Default for DrawLine {
 pub struct DrawPolygon {
     pub prim: PrimType,
     pub fill: bool,
-    pub offset: Point,
-    pub width: u32,
-    pub height: u32,
-    pub rot: f32,
+    pub rect: RotateRect
 }
 
 impl Default for DrawPolygon {
     fn default() -> Self {
         DrawPolygon {
             prim: PT::Triangle,
-            offset: Point::new(),
+            rect: RotateRect::default(),
             fill: true,
-            width: 5,
-            height: 5,
-            rot: 0.,
         }
     }
 }
@@ -361,32 +390,27 @@ impl DrawPolygon {
             ..DrawPolygon::default()
         }
     }
-    pub fn set_center(&mut self, pt: &Point) {
-        self.offset = *pt - Point { x: self.width as f32 / 2., y: self.height as f32 / 2. };
-    }
 }
 
 #[derive(SendUniforms)]
-struct PolyTransform {
+pub struct RectTransform {
     projection: glm::Mat4,
     model: glm::Mat4,
 }
     
 #[allow(dead_code)]
-impl PolyTransform {
-    fn new(s: &DrawPolygon, vp: &Point) -> Self {
+impl RectTransform {
+    pub fn new(r: &RotateRect, vp: &Point) -> Self {
         let projection = glm::ortho(0., vp.x, vp.y, 0., -1., 1.);
-        let rad = 180. * s.rot / PI;
-        let mut model = glm::translate(&glm::identity(), &s.offset.to_vec3());
+        let rad = 180. * r.rot / PI;
+        let mut model = glm::translate(&glm::identity(), &r.offset.to_vec3());
 
-        model = glm::translate(&model, 
-            &glm::vec3(0.5 * s.width as f32, 0.5 * s.height as f32, 0.));
+        model = glm::translate(&model, &(r.size / 2.).to_vec3());
         model = glm::rotate(&model, rad, &glm::vec3(0., 0., 1.));
-        model = glm::translate(&model, 
-            &glm::vec3(-0.5 * s.width as f32, -0.5 * s.height as f32, 0.));
+        model = glm::translate(&model, &(-r.size / 2.).to_vec3());
 
-        model = glm::scale(&model, &glm::vec3(s.width as f32, s.height as f32, 1.));
-        PolyTransform {projection, model}
+        model = glm::scale(&model, &glm::vec3(r.size.x, r.size.y, 1.));
+        RectTransform {projection, model}
     }
     fn get(&self) -> glm::Mat4 {
         self.projection * self.model
@@ -394,12 +418,11 @@ impl PolyTransform {
     fn transform(&self, coords: &glm::Vec4) -> glm::Vec4 {
         self.get() * coords
     }
-    fn pixels_to_coords(&self, pt: &Point) -> glm::Vec4{
-        self.projection * pt.to_vec4()
+    pub fn pixel_to_model(&self, pt: &Point) -> glm::Vec4 {
+        glm::inverse(&self.model) * pt.to_vec4() 
     }
-    fn coords_to_pixels(&self, coords: &glm::Vec4) -> Point {
-        let px = glm::inverse(&self.projection) * coords;
-        Point {x: px[0], y: px[1]}
+    pub fn model_to_pixel(&self, coords: &glm::Vec4) -> Point {
+        (self.model * coords).into()
     }
     fn inv(&self) -> glm::Mat4 {
         glm::inverse(&self.get())
@@ -431,12 +454,18 @@ pub struct Rect {
     pub c1: Point, pub c2: Point
 }
 
+impl Default for Rect {
+    fn default() -> Self {
+        Rect { c1: Point{x:0.,y:0.}, c2: Point{x:1., y:1.} }
+    }
+}
+
 impl Rect {
     pub fn new(c1: Point, c2: Point) -> Self {
         Rect::bounding_box(&[c1, c2])
     }
     pub fn bounding_box(pts: &[Point]) -> Self {
-        if pts.is_empty() { return Rect{c1: Point::new(), c2: Point::new()} }
+        if pts.is_empty() { return Rect{c1: Point::origin(), c2: Point::origin()} }
         let mut min_pt = pts[0]; let mut max_pt = min_pt;
         for p in pts {
             if p.x < min_pt.x { min_pt.x = p.x };
@@ -483,6 +512,10 @@ impl Rect {
     pub fn max_y(&self) -> &f32 {
         &self.c2.y
     }
+    pub fn to_model(&self, trans: &RectTransform) -> Rect {
+        Rect::new(trans.pixel_to_model(&self.c1).into(), 
+                  trans.pixel_to_model(&self.c2).into())
+    }
 }
 
 impl InBounds for Rect {
@@ -497,9 +530,8 @@ impl InBounds for Rect {
 
 impl InBounds for DrawPolygon {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        let trans = PolyTransform::new(self, vp);
-        let normpt = trans.inv() * trans.pixels_to_coords(p);
-        self.prim.in_bounds(&Point {x: normpt.x, y: normpt.y})
+        let trans = RectTransform::new(&self.rect, vp);
+        self.prim.in_bounds(&trans.pixel_to_model(p).into())
     }
 }
 
@@ -533,16 +565,14 @@ pub enum ShapeProps {
 #[derive(Clone, PartialEq)]
 pub struct Shape {
     pub props: ShapeProps,
-    pub color: (u8, u8, u8), //rgb
-    pub alpha: f32
+    pub color: glm::Vec4,
 }
 
 impl Default for Shape {
     fn default() -> Self {
         Shape {
             props: ShapeProps::Polygon(DrawPolygon::default()),
-            color: (0,0,0),
-            alpha: 1.0
+            color: glm::vec4(0.,0.,0.,1.),
         }
     }
 }
@@ -557,10 +587,9 @@ impl Shape {
     pub fn verts(&self, vp: &Point) -> Vec<Point> {
         match &self.props {
             SP::Polygon(ref draw_poly) => {
-                let trans = PolyTransform::new(&draw_poly, vp);
+                let trans = RectTransform::new(&draw_poly.rect, vp);
                 let v = self.prim_type().verts().chunks(2).map(|s| { 
-                    let v = trans.transform(&glm::vec4(s[0], s[1], 0.0, 1.0));
-                    trans.coords_to_pixels(&v)
+                    trans.model_to_pixel(&glm::vec4(s[0], s[1], 0.0, 1.0))
                 }).collect();
                 v
             }
@@ -571,14 +600,13 @@ impl Shape {
     }
     fn transform(&self, vp: &Point) -> Box<dyn SendUniforms> {
         match &self.props {
-            SP::Polygon(draw_poly) => Box::new(PolyTransform::new(&draw_poly, vp)),
+            SP::Polygon(draw_poly) => Box::new(RectTransform::new(&draw_poly.rect, vp)),
             SP::Line(draw_line) => Box::new(LineTransform::new(&draw_line, vp))
         }
     }
     pub fn draw(&self, ctx: &DrawCtx) {
         ctx.prog_map[&self.prim_type()].set_used();
         let trans = self.transform(&ctx.viewport);
-        let color = rgb_to_f32(&self.color);
         let ptype = self.prim_type();
         let prog_id = ctx.prog_map[&ptype].id();
         let vao = ctx.prim_map[&ptype];
@@ -590,8 +618,7 @@ impl Shape {
         }
         unsafe {
             trans.send_uniforms(prog_id).unwrap();
-            let color_loc = gl::GetUniformLocation(prog_id, GChar::new("color").ptr());
-            gl::Uniform4f(color_loc, color.0, color.1, color.2, self.alpha);
+            self.color.send_uniform(prog_id, "color").unwrap();
             gl::LineWidth(line_width as GLfloat);
             gl::BindVertexArray(vao);
             gl::DrawArrays(self.mode(), 0, self.size());
@@ -639,49 +666,44 @@ impl ShapeBuilder {
         ShapeBuilder { s: Shape::default(), p: DrawPolygon::default() }
     }
     pub fn offset(mut self, x: i32, y: i32) -> Self {
-        self.p.offset = Point {x: x as f32,y: y as f32};
+        self.p.rect.offset = Point {x: x as f32,y: y as f32};
         self
     }
     pub fn rot(mut self, rot: f32) -> ShapeBuilder {
-        self.p.rot = rot;
+        self.p.rect.rot = rot;
         self
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
-        self.s.color = (r,g,b);
+        self.s.color = rgb_to_f32(r,g,b);
         self
     }
     pub fn alpha(mut self, a: f32) -> Self {
-        self.s.alpha = a;
+        self.s.color[3] = a;
         self
     }
     pub fn circle(mut self, rad: u32) -> Self {
         self.p.prim = PT::Circle;
-        self.p.width = rad;
-        self.p.height = rad;
+        self.p.rect.size = Point::new(rad as f32, rad as f32);
         self
     }
     pub fn ellipse(mut self, rad_x: u32, rad_y: u32) -> Self {
         self.p.prim = PT::Circle;
-        self.p.width = rad_x;
-        self.p.height = rad_y;
+        self.p.rect.size = Point::new(rad_x as f32, rad_y as f32);
         self
     }
     pub fn rect(mut self, width: u32, height: u32) -> Self {
         self.p.prim = PT::Rect;
-        self.p.width = width;
-        self.p.height = height;
+        self.p.rect.size = Point::new(width as f32, height as f32);
         self
     }
     pub fn square(mut self, side: u32) -> Self {
         self.p.prim = PT::Rect;
-        self.p.width = side;
-        self.p.height = side;
+        self.p.rect.size = Point::new(side as f32, side as f32);
         self
     }
     pub fn tri(mut self, base: u32, height: u32) -> Self {
         self.p.prim = PT::Triangle;
-        self.p.width = base;
-        self.p.height = height;
+        self.p.rect.size = Point::new(base as f32, height as f32);
         self
     }
     pub fn fill(mut self, fill: bool) -> Self {
@@ -720,11 +742,11 @@ impl LineBuilder {
         self
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
-        self.s.color = (r,g,b);
+        self.s.color = rgb_to_f32(r,g,b);
         self
     }
     pub fn alpha(mut self, a: f32) -> Self {
-        self.s.alpha = a;
+        self.s.color[3] = a;
         self
     }
     pub fn line_width(mut self, width: f32) -> Self {
@@ -734,7 +756,7 @@ impl LineBuilder {
     pub fn get(mut self) -> Shape { self.s.props = SP::Line(self.l); self.s }
 }
 
-pub fn rgb_to_f32(rgb: &(u8, u8, u8)) -> (f32, f32, f32) {
-    (rgb.0 as f32 / 255., rgb.1 as f32 / 255., rgb.2 as f32 / 255.)
+pub fn rgb_to_f32(r: u8, g: u8, b: u8) -> glm::Vec4 {
+    glm::vec4(r as f32 / 255., g as f32 / 255., b as f32 / 255., 1.)
 }
 

@@ -135,20 +135,20 @@ fn main() {
     let _gl = gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as *const std::os::raw::c_void);
 
     //let (r, g, b) = rgb_to_f32(&rand_color());
-    let (r, g, b) = rgb_to_f32(&(3, 190, 252));
+    let bg_color = rgb_to_f32(3, 190, 252);
     unsafe {
         gl::Viewport(0, 0, VIEWPORT.x as i32, VIEWPORT.y as i32);
-        gl::ClearColor(r, g, b, 1.0);
+        gl::ClearColor(bg_color[0], bg_color[1], bg_color[2], bg_color[3]);
     }
 
     let programs = PrimPrograms::new();
     let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
     
-    //let mut draw_list = DrawList::new();
-    //draw_list.add_test_shapes();
+    let mut draw_list = DrawList::new();
+    draw_list.add_test_shapes();
     //draw_list.add_test_lines();
     //draw_list.add_random_shapes(&VIEWPORT, 10);
-    let draw_list = DrawList::new();
+    //let draw_list = DrawList::new();
 
     let mut app_state = AppState::new(draw_list, draw_ctx);
 
