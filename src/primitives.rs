@@ -8,6 +8,7 @@ use std::f32::{self, consts::PI};
 use PrimType as PT;
 use ShapeProps as SP;
 use crate::render_gl::{Shader, Program, SendUniforms, SendUniform};
+use sem_graph_derive::SendUniforms;
 
 type PrimMap = HashMap<PrimType, GLuint>;
 
@@ -185,6 +186,12 @@ pub struct Point {
 impl From<glm::Vec4> for Point {
     fn from(v: glm::Vec4) -> Point {
         Point {x: v[0], y: v[1]}
+    }
+}
+
+impl From<glm::TVec2<i32>> for Point {
+    fn from(v: glm::TVec2<i32>) -> Point {
+        Point {x: v[0] as f32, y: v[1] as f32}
     }
 }
 

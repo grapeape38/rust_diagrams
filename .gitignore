@@ -1,2 +1,4 @@
 /target
+/testing
+*.ttf
 **/*.rs.bk

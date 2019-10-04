@@ -8,7 +8,8 @@ use sdl2::keyboard::{Keycode, Mod};
 use sdl2::mouse::{Cursor, SystemCursor};
 use std::iter::FromIterator;
 use crate::primitives::*;
-use crate::ShapeProps as SP;
+use crate::primitives::ShapeProps as SP;
+//use crate::render_text::RenderText;
 
 pub struct CursorMap(HashMap<SystemCursor, Cursor>);
 impl CursorMap {
@@ -147,16 +148,10 @@ pub struct AppState<'a> {
     shape_bar: ShapeBar,
     drag_mode: DragMode,
     hover_item: HoverItem,
-    draw_ctx: DrawCtx<'a>,
+    pub draw_ctx: DrawCtx<'a>,
     cursors: CursorMap
     //click_mode: ClickMode,
 }
-
-/*#[derive(Clone, Copy)]
-enum ClickMode {
-    Select,
-    CreateShape {shape_id: ShapeID}
-}*/
 
 #[derive(Clone, Copy)]
 pub enum DragMode {
@@ -403,7 +398,11 @@ impl<'a> AppState<'a> {
         }
     }
     pub fn render(&self) {
-        unsafe { gl::Clear(gl::COLOR_BUFFER_BIT); }
+        unsafe { 
+            gl::Clear(gl::COLOR_BUFFER_BIT); 
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+        }
         self.shape_bar.draw(&self.draw_ctx);
         self.draw_list.draw(&self.draw_ctx);
         self.draw_hover_item();

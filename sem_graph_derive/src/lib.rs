@@ -1,6 +1,4 @@
 extern crate proc_macro;
-extern crate gl;
-extern crate nalgebra_glm;
 
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};

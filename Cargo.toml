@@ -4,12 +4,16 @@ version = "0.1.0"
 authors = ["Eric <eric_russo>"]
 edition = "2018"
 
+[lib]
+name = "sem_graph"
+
 [dependencies]
 gl = "0.13.0"
 nalgebra-glm = "0.4.2"
 rand = "0.7.1"
 num-traits = "0.2.8"
 num-derive = "0.2"
+freetype-rs = "0.22.0"
 sem_graph_derive = { path = "./sem_graph_derive" }
 
 [dependencies.sdl2]
