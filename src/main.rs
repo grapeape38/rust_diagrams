@@ -11,6 +11,7 @@ pub mod interface;
 pub mod render_gl;
 pub mod render_text;
 pub mod primitives;
+pub mod textedit;
 use interface::{AppState, DrawList};
 use primitives::{*};
 
@@ -31,11 +32,12 @@ fn main() {
     gl_attr.set_context_version(4,5);
     let _gl = gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as *const std::os::raw::c_void);
 
-    //let (r, g, b) = rgb_to_f32(&rand_color());
     let bg_color = rgb_to_f32(3, 190, 252);
     unsafe {
         gl::Viewport(0, 0, VIEWPORT.x as i32, VIEWPORT.y as i32);
         gl::ClearColor(bg_color[0], bg_color[1], bg_color[2], bg_color[3]);
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
     }
 
     let programs = PrimPrograms::new();
@@ -69,6 +71,9 @@ fn main() {
                     app_state.handle_keyboard_event(&ev);
                 }
                 _ => {},
+            }
+            unsafe { 
+                gl::Clear(gl::COLOR_BUFFER_BIT); 
             }
             app_state.render();
             window.gl_swap_window();

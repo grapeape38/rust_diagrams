@@ -11,7 +11,7 @@ use std::ffi::CString;
 use gl::types::*;
 
 use crate::render_gl::{Program, Shader, SendUniform, SendUniforms};
-use crate::primitives::{Point, DrawCtx};
+use crate::primitives::{Point, Radians, Rect, DrawCtx};
 use sem_graph_derive::SendUniforms;
 
 
@@ -49,7 +49,61 @@ struct Character {
     texture: GLuint,
     size: glm::TVec2<i32>,
     bearing: glm::TVec2<i32>,    // Offset from baseline to left/top of glyph
-    advance: GLuint    // Offset to advance to next glyph
+    advance: GLint 
+}
+
+#[derive(SendUniforms)]
+struct TextUniforms {
+    text_color: glm::Vec3,
+    model: glm::Mat4,
+    projection: glm::Mat4
+}
+
+impl TextUniforms {
+    fn new(text_color: &glm::Vec3, rot: Radians, orig: &Point, vp: &Point) -> Self {
+        let projection = glm::ortho(0., vp.x, vp.y, 0., -1., 1.);
+        let mut model = glm::translate(&glm::identity(), &orig.to_vec3());
+        model = glm::rotate(&model, -rot.0, &glm::vec3(0.,0.,1.));
+        let text_color = text_color.clone();
+        TextUniforms {text_color, model, projection}
+    }
+}
+
+pub struct TextParams<'a> {
+    pub text: &'a str,
+    pub color: glm::Vec3,
+    pub scale: f32,
+    pub rot: Radians,
+    pub offset: Point,
+}
+
+#[allow(dead_code)]
+impl<'a> TextParams<'a> {
+    pub fn new(text: &'a str) -> Self {
+        TextParams {
+            text,
+            color: glm::vec3(0.,0.,0.),
+            scale: 1.0,
+            rot: Radians(0.),
+            offset: Point::origin(),
+        }
+    }
+    pub fn color(mut self, color: &glm::Vec3) -> Self {
+        self.color = color.clone();
+        self
+    }
+    pub fn offset(mut self, offset: &Point) -> Self {
+        self.offset = offset.clone();
+        self
+    }
+    pub fn rot(mut self, rot: Radians) -> Self {
+        self.rot = rot.clone();
+        self
+    }
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
+    }
 }
 
 pub struct RenderText {
@@ -59,29 +113,16 @@ pub struct RenderText {
     prog: Program
 }
 
-#[derive(SendUniforms)]
-struct TextUniforms {
-    text_color: glm::Vec3,
-    projection: glm::Mat4
-}
-
-impl TextUniforms {
-    fn new(text_color: glm::Vec3, vp: &Point) -> Self {
-        let projection = glm::ortho(0., vp.x, vp.y, 0., -1., 1.);
-        TextUniforms {text_color, projection}
-    }
-}
-
 impl RenderText {
     pub fn new() -> Result<Self, Box<dyn Error>> {
         unsafe { gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1); }
         let lib = Library::init()?;
-        let face = lib.new_face("src/fonts/arial.ttf", 0).map_err(|e| format!("Could not load font face: {:?}", e))?;
+        let face = lib.new_face("fonts/arial.ttf", 0).map_err(|e| format!("Could not load font face: {:?}", e))?;
         let mut char_map = HashMap::new();
         face.set_char_size(12 * 64, 0, 50, 0).unwrap();
         for c in 0..=127 {
             face.load_char(c as usize, freetype::face::LoadFlag::RENDER).map_err(|e| format!("Could not load char {:?} {:?}", c, e))?;
-            face.set_pixel_sizes(0, 48)?;
+            face.set_pixel_sizes(0, 24)?;
             let glyph = face.glyph();
             let bitmap = glyph.bitmap();
             let mut texture: GLuint = 0;
@@ -105,37 +146,43 @@ impl RenderText {
                 gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as GLint);
                 let size = glm::vec2(bitmap.width(), bitmap.rows());
                 let bearing = glm::vec2(glyph.bitmap_left(), glyph.bitmap_top());
-                let advance = glyph.advance().x as GLuint;
+                let advance = glyph.advance().x as GLint; 
                 char_map.insert(c, 
                     Character { texture, size, bearing, advance });
             }
         }
+        unsafe { gl::BindTexture(gl::TEXTURE_2D, 0); }
         let (vao, vbo) = buffer_char_data();
         let prog = get_char_program()?;
         Ok(RenderText { char_map, vao, vbo, prog })
     }
-    pub fn draw(&self, text: &str, pt: &Point, scale: f32, color: glm::Vec3, draw_ctx: &DrawCtx) {
+    pub fn draw(&self, params: &TextParams, draw_ctx: &DrawCtx) {
         self.prog.set_used();
-        let trans = TextUniforms::new(color, &draw_ctx.viewport);
+        let (text, color, scale, rot, offset) = (params.text, &params.color, params.scale, params.rot, params.offset);
+        let trans = TextUniforms::new(color, rot, &offset, &draw_ctx.viewport);
         trans.send_uniforms(self.prog.id()).unwrap();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindVertexArray(self.vao);
         }
-        let mut char_pt = *pt;
+        let mut char_pt = Point::origin();
         for c in text.bytes() {
+            if c == '\n' as u8 {
+                char_pt.x = 0.;
+                char_pt.y += self.line_height(scale);
+                continue;
+            }
             let ch = &self.char_map[&(c as GLchar)];
             let offset = Point::new(
                 ch.bearing.x as f32 * scale,
                 (ch.size.y - ch.bearing.y) as f32 * scale);
+            let size = Point::new(scale, scale) * ch.size.into();
             let orig = char_pt + offset;
-            let mut size: Point = ch.size.into();
-            size *= Point::new(scale, -scale);
             let verts = [
-                [orig.x, orig.y + size.y, 0.0, 0.0],
+                [orig.x, orig.y - size.y, 0.0, 0.0],
                 [orig.x, orig.y, 0.0, 1.0],
                 [orig.x + size.x, orig.y, 1.0, 1.0],
-                [orig.x + size.x, orig.y + size.y, 1.0, 0.0]
+                [orig.x + size.x, orig.y - size.y, 1.0, 0.0]
             ];
             unsafe { 
                 gl::BindTexture(gl::TEXTURE_2D, ch.texture);
@@ -147,5 +194,37 @@ impl RenderText {
             }
             char_pt.x += (ch.advance >> 6) as f32 * scale;
         }
+        unsafe {
+            gl::BindVertexArray(0);
+            gl::BindTexture(gl::TEXTURE_2D, 0);
+        }
     }
+    pub fn has_char(&self, ch: char) -> bool {
+        self.char_map.contains_key(&(ch as GLchar))
+    }
+    pub fn line_height(&self, scale: f32) -> f32 {
+        self.char_map[&('a' as i8)].size.y as f32 * scale * 1.4
+    }
+    pub fn char_size(&self, ch: char, scale: f32) -> Point {
+        self.char_map.get(&(ch as GLchar)).map(|ch| Point::new(scale * ch.size.x as f32, scale * ch.size.y as f32))
+            .unwrap_or(Point::origin())
+    }
+    pub fn char_size_w_advance(&self, ch: char, scale: f32) -> Point {
+        self.char_map.get(&(ch as GLchar)).map(|ch| Point::new(scale * (ch.advance >> 6) as f32, scale * ch.size.y as f32))
+            .unwrap_or(Point::origin())
+    }
+    pub fn measure(&self, text: &str, scale: f32) -> Point {
+        if text.is_empty() {
+            return Point::origin();
+        } 
+        let lh = self.line_height(scale);
+        text.bytes().fold(Point::new(0., lh), |size, c| {
+            let ch = &self.char_map[&(c as GLchar)];
+            size + match c as char {
+                '\n' => Point::new(0., lh),
+                _ => Point::new(scale * (ch.advance >> 6) as f32, 0.)
+            } 
+        }) 
+    } 
 }
+

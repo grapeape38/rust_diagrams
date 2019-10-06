@@ -14,6 +14,7 @@ rand = "0.7.1"
 num-traits = "0.2.8"
 num-derive = "0.2"
 freetype-rs = "0.22.0"
+ropey = "1.1.0"
 sem_graph_derive = { path = "./sem_graph_derive" }
 
 [dependencies.sdl2]

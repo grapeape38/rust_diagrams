@@ -284,6 +284,17 @@ impl std::ops::Div<Point> for Point {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct Radians(pub f32);
+#[derive(Copy, Clone)]
+pub struct Degrees(pub f32);
+
+impl From<Degrees> for Radians {
+    fn from(deg: Degrees) -> Self {
+        Radians(deg.0 * PI / 180.)
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub struct RotateRect {
     pub offset: Point,
@@ -652,6 +663,12 @@ impl Shape {
             SP::Line(draw_line) => {
                 vec![draw_line.p1, draw_line.p2]
             }
+        }
+    }
+    pub fn rect(&self) -> RotateRect {
+        match self.props {
+            SP::Polygon(ref draw_poly) => draw_poly.rect.clone(),
+            SP::Line(_) => RotateRect::default()
         }
     }
     fn transform(&self, vp: &Point) -> Box<dyn SendUniforms> {

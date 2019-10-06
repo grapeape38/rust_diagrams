@@ -3,9 +3,6 @@ extern crate gl;
 extern crate rand;
 extern crate nalgebra_glm;
 
-#[macro_use]
-extern crate sem_graph_derive;
-
 extern crate sem_graph;
 
 use sem_graph::interface::*;
@@ -40,6 +37,7 @@ fn add_test_lines(draw_list: &mut DrawList) {
         .color(255, 0, 0).get()
     );
 }
+#[allow(dead_code)]
 fn add_rotated_shapes(draw_list: &mut DrawList) {
     draw_list.add(ShapeBuilder::new() 
         .square(200)
@@ -60,6 +58,7 @@ fn add_rotated_shapes(draw_list: &mut DrawList) {
         .color(0, 255, 0).get()
     );
 }
+#[allow(dead_code)]
 fn add_test_shapes(draw_list: &mut DrawList) {
     draw_list.add(ShapeBuilder::new() 
         .tri(100, 100)
@@ -84,6 +83,7 @@ fn add_test_shapes(draw_list: &mut DrawList) {
         .color(255, 255, 0).get()
     );
 }
+#[allow(dead_code)]
 fn add_random_shapes(draw_list: &mut DrawList, vp: &Point, n: u8) {
     const MIN_DIM: u32 = 10;
     let max_width = vp.x as u32 / 6;
@@ -142,50 +142,58 @@ fn test_draw() {
     gl_attr.set_context_version(4,5);
     let _gl = gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as *const std::os::raw::c_void);
 
-    //let (r, g, b) = rgb_to_f32(&rand_color());
     let bg_color = rgb_to_f32(3, 190, 252);
     unsafe {
         gl::Viewport(0, 0, VIEWPORT.x as i32, VIEWPORT.y as i32);
         gl::ClearColor(bg_color[0], bg_color[1], bg_color[2], bg_color[3]);
+        gl::Enable(gl::CULL_FACE);
+        gl::Enable(gl::BLEND);
+        gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
     }
 
     let programs = PrimPrograms::new();
     let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
 
-    let mut draw_list = DrawList::new();
+    //let draw_list = DrawList::new();
+    //let mut draw_list = DrawList::new();
     //add_rotated_shapes(&mut draw_list);
     //add_test_lines(&mut draw_list);
     //add_random_shapes(&mut draw_list, &VIEWPORT, 10);
 
-    let mut app_state = AppState::new(draw_list, draw_ctx);
+    //let mut app_state = AppState::new(draw_list, draw_ctx);
 
     let mut event_pump = sdl.event_pump().unwrap();
     let mut timer = SystemTime::now();
     let render_text = RenderText::new().unwrap();
 
+    let test_str = "This is a test sentence!\n let's test this sentence!\n haha! woo hoo!";
+    let purple = glm::vec3(1.0, 0.0, 1.0);
+    let text_params = TextParams::new(test_str).offset(&Point::new(300.,300.)).color(&purple).rot(Degrees(0.).into());
     'main: loop {
         for event in event_pump.poll_iter() {
-            let kmod = sdl.keyboard().mod_state();
+            let _kmod = sdl.keyboard().mod_state();
             match event {
-                ev @ Event::MouseMotion{..} => { 
+                _ev @ Event::MouseMotion{..} => { 
                     if timer.elapsed().unwrap() >= Duration::from_millis(5) { //don't always handle mouse move
-                        app_state.handle_mouse_event(&ev, &kmod);
+                        //app_state.handle_mouse_event(&ev, &kmod);
                         timer = SystemTime::now();
                     }
                 }
-                ev @ Event::MouseButtonDown{..} | 
-                ev @ Event::MouseButtonUp{..} => { //always handle mouse down and up
-                    app_state.handle_mouse_event(&ev, &kmod);
+                _ev @ Event::MouseButtonDown{..} | 
+                _ev @ Event::MouseButtonUp{..} => { //always handle mouse down and up
+                    //app_state.handle_mouse_event(&ev, &kmod);
                 }
                 Event::Quit {..} | 
                 Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'main,
-                ev @ Event::KeyDown {..} => {
-                    app_state.handle_keyboard_event(&ev);
+                _ev @ Event::KeyDown {..} => {
+                    //app_state.handle_keyboard_event(&ev);
                 }
                 _ => {},
             }
-            app_state.render();
-            render_text.draw("This is a test sentence!", &Point::new(300., 300.), 1.0, glm::vec3(0.,0.,255.), &app_state.draw_ctx);
+            unsafe { 
+                gl::Clear(gl::COLOR_BUFFER_BIT); 
+            }
+            render_text.draw(&text_params, &draw_ctx);
             window.gl_swap_window();
         }
     }

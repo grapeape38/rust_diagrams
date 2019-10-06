@@ -9,7 +9,8 @@ use sdl2::mouse::{Cursor, SystemCursor};
 use std::iter::FromIterator;
 use crate::primitives::*;
 use crate::primitives::ShapeProps as SP;
-//use crate::render_text::RenderText;
+use crate::render_text::RenderText;
+use crate::textedit::{TextBox, get_char_from_keycode, get_dir_from_keycode};
 
 pub struct CursorMap(HashMap<SystemCursor, Cursor>);
 impl CursorMap {
@@ -22,6 +23,7 @@ impl CursorMap {
         m.insert(SystemCursor::SizeNS, Cursor::from_system(SystemCursor::SizeNS).unwrap());
         m.insert(SystemCursor::SizeNWSE, Cursor::from_system(SystemCursor::SizeNWSE).unwrap());
         m.insert(SystemCursor::SizeWE, Cursor::from_system(SystemCursor::SizeWE).unwrap());
+        m.insert(SystemCursor::IBeam, Cursor::from_system(SystemCursor::IBeam).unwrap());
         CursorMap(m)
     }
     fn get(&self, cursor: &SystemCursor) -> &Cursor {
@@ -96,10 +98,11 @@ impl DrawList {
     pub fn new() -> DrawList {
         DrawList {m: HashMap::new(), draw_order: Vec::new(), next_id: 0}
     }
-    pub fn add(&mut self, s: Shape) {
+    pub fn add(&mut self, s: Shape) -> ShapeID {
         self.m.insert(self.next_id, s);
         self.draw_order.push(self.next_id);
         self.next_id += 1;
+        self.next_id - 1
     }
     fn get(&self, id: &u32) -> Option<&Shape> {
         self.m.get(id)
@@ -145,8 +148,11 @@ type ShapeID = u32;
 pub struct AppState<'a> {
     draw_list: DrawList,
     selection: HashMap<ShapeID, ShapeSelectBox>,
+    text_boxes: HashMap<ShapeID, TextBox>,
     shape_bar: ShapeBar,
     drag_mode: DragMode,
+    key_mode: KeyboardMode,
+    render_text: RenderText,
     hover_item: HoverItem,
     pub draw_ctx: DrawCtx<'a>,
     cursors: CursorMap
@@ -157,19 +163,25 @@ pub struct AppState<'a> {
 pub enum DragMode {
     DragNone,
     SelectBox {start_pt: Point, last_pt: Point},
-    CreateShape { shape_id: ShapeID, start_pt: Point, last_pt: Point },
+    CreateShape { shape_id: ShapeBarShape, start_pt: Point, last_pt: Point },
     DragShapes { last_pt: Point, click_shape: ShapeID, clear_select: bool },
     DragResize { click_box: ShapeID, drag_vertex: DragVertex },
     DragRotate { click_box: ShapeID, last_angle: f32 }
 }
 
+#[derive(Clone, Copy)]
+pub enum KeyboardMode {
+    KeyboardNone,
+    TextEdit(ShapeID),
+}
 
 #[derive(PartialEq, Clone)]
 pub enum HoverItem {
    HoverNone,
    HoverVertex(ShapeID, DragVertex),
    HoverRotate(ShapeID),
-   HoverShape(ShapeID, Shape),
+   HoverShape(ShapeBarShape, Shape),
+   HoverText(ShapeID, usize),
    HoverRect(ShapeID) 
 }
 
@@ -179,15 +191,22 @@ impl<'a> AppState<'a> {
             draw_list,
             shape_bar: ShapeBar::new(&draw_ctx.viewport),
             selection: HashMap::new(),
-            //click_mode: ClickMode::Select,
             drag_mode: DragMode::DragNone,
             hover_item: HoverItem::HoverNone,
+            key_mode: KeyboardMode::KeyboardNone,
+            render_text: RenderText::new().unwrap(),
+            text_boxes: HashMap::new(),
             draw_ctx,
             cursors: CursorMap::new()
         }
     }
     fn get_shape_select_box(&self, s: &DrawPolygon) -> ShapeSelectBox {
         ShapeSelectBox(s.rect.clone())
+    }
+    fn is_hover_text(&self, p: &Point, vp: &Point) -> Option<(ShapeID, usize)> {
+        self.text_boxes.iter().find(|(id, _)| self.draw_list.get(id).unwrap().in_bounds(p, vp))
+            .map(|(id, tb)| (id, tb, self.draw_list.get(id).unwrap().rect()))
+            .and_then(|(id, tb, rect)| tb.hover_text(p, &rect, &self.render_text).map(|pos| (*id, pos)))
     }
     fn is_hover_rotate(&self, p: &Point, vp: &Point) -> Option<ShapeID> {
         self.selection.iter().find(|(_, r)| r.is_hover_rotate(p, vp)).map(|(id, _)| *id)
@@ -217,12 +236,17 @@ impl<'a> AppState<'a> {
                 self.hover_item = HoverItem::HoverNone;
                 *cursor = SystemCursor::Crosshair;
             }
+            HoverItem::HoverText(tb_id, cursor_pos) => {
+                self.text_boxes.get_mut(&tb_id).map(|tb| tb.set_cursor_pos(cursor_pos));
+                self.key_mode = KeyboardMode::TextEdit(tb_id);
+                *cursor = SystemCursor::IBeam;
+            }
             _ => {}
         }
     }
     pub fn handle_select(&mut self, pt: &Point, clear_select: bool, cursor: &mut SystemCursor) {
         if clear_select {
-            self.selection.clear();
+            self.clear_selection();
         }
         if let Some(shape_id) = self.shape_bar.click_shape(&pt, &self.draw_ctx.viewport) {
             *cursor =  SystemCursor::Crosshair;
@@ -278,7 +302,11 @@ impl<'a> AppState<'a> {
                 if let Some(sbox) = self.selection.get_mut(&click_box) {
                     *drag_vertex = sbox.drag_side(&drag_vertex, &pt, vp);
                     self.draw_list.get_mut(&click_box).map(|s| s.set_rect(&sbox.0.clone()));
-                }
+               }
+               if let Some(tbox) = self.text_boxes.get_mut(&click_box) {
+                   let rect = self.draw_list.get(&click_box).unwrap().rect();
+                   tbox.format_text(&rect, 0, &self.render_text);
+               }
             }
             DragMode::CreateShape { ref mut last_pt, .. } => {
                 *last_pt = *pt;
@@ -309,9 +337,17 @@ impl<'a> AppState<'a> {
             *cursor = SystemCursor::Hand;
             self.hover_item = HoverItem::HoverRotate(select_id);
         }
+        else if let Some((tb_id, cursor_pos)) = self.is_hover_text(pt, vp) {
+            *cursor = SystemCursor::IBeam;
+            self.hover_item = HoverItem::HoverText(tb_id, cursor_pos);
+        }
         else {
             self.hover_item = HoverItem::HoverNone;
         }
+    }
+    fn clear_selection(&mut self) {
+        self.selection.clear();
+        self.key_mode = KeyboardMode::KeyboardNone;
     }
     pub fn handle_mouse_event(&mut self, ev: &Event, kmod: &Mod) {
         match *ev {
@@ -340,9 +376,16 @@ impl<'a> AppState<'a> {
                             }
                         },
                         DragMode::CreateShape { shape_id, start_pt, last_pt } => {
+                            let r = Rect::new(start_pt, last_pt);
+                            //let fill = shape_id != ShapeBarShape::TextBox;
+                            let fill = true;
                             let s = self.shape_bar.get_shape(
-                                shape_id, &Rect::new(start_pt, last_pt), true);
-                            self.draw_list.add(s);
+                                shape_id, &r, fill);
+                            let id = self.draw_list.add(s);
+                            if let ShapeBarShape::TextBox = shape_id {
+                                self.text_boxes.insert(id, TextBox::new());
+                                self.key_mode = KeyboardMode::TextEdit(id);
+                            }
                         }
                         _ => {}
                     }
@@ -364,6 +407,21 @@ impl<'a> AppState<'a> {
         }
     }
     pub fn handle_keyboard_event(&mut self, ev: &Event) {
+        if let KeyboardMode::TextEdit(shape_id) = self.key_mode {
+            if let Event::KeyDown { keycode: Some(keycode), .. } = *ev {
+                if let Some(ch) = get_char_from_keycode(keycode) {
+                    let rect = self.draw_list.get(&shape_id).unwrap().rect();
+                    self.text_boxes.get_mut(&shape_id).unwrap().insert_char(ch, &rect, &self.render_text);
+                }
+                else if let Some(dir) = get_dir_from_keycode(keycode) {
+                    self.text_boxes.get_mut(&shape_id).unwrap().move_cursor(dir);
+                }
+                else if keycode == Keycode::Backspace {
+                    let rect = self.draw_list.get(&shape_id).unwrap().rect();
+                    self.text_boxes.get_mut(&shape_id).unwrap().delete_char(&rect, &self.render_text);
+                }
+            }
+        }
         match *ev {
             Event::KeyDown { keycode: Some(Keycode::Delete), .. } => self.delete_selection(),
             _ => {}
@@ -372,6 +430,7 @@ impl<'a> AppState<'a> {
     fn delete_selection(&mut self) {
         for id in self.selection.keys() {
             self.draw_list.remove(id); 
+            self.text_boxes.remove(id);
         }
         self.selection.clear();
     }
@@ -397,19 +456,27 @@ impl<'a> AppState<'a> {
             r.draw(&self.draw_ctx);
         }
     }
-    pub fn render(&self) {
-        unsafe { 
-            gl::Clear(gl::COLOR_BUFFER_BIT); 
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+    fn draw_text_boxes(&self) {
+        for (id, tb) in self.text_boxes.iter() {
+            let selected = match self.key_mode {
+                KeyboardMode::TextEdit(edit_id) => *id == edit_id,
+                _ => false
+            };
+            let rect = self.draw_list.get(&id).unwrap().rect();
+            tb.draw(&rect, selected, &self.render_text, &self.draw_ctx);
         }
+    }
+    pub fn render(&self) {
         self.shape_bar.draw(&self.draw_ctx);
         self.draw_list.draw(&self.draw_ctx);
+        self.draw_text_boxes();
         self.draw_hover_item();
         self.draw_select_box();
         self.draw_shape_select_boxes();
     }
 }
+
+
 
 #[derive(Clone)]
 struct ShapeSelectBox(RotateRect);
@@ -607,8 +674,45 @@ impl InBounds for ShapeSelectBox {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum ShapeBarShape {
+    Circle = 0,
+    Triangle = 1,
+    Rect = 2,
+    TextBox = 3
+}
+
+impl ShapeBarShape {
+    fn to_prim(&self) -> PrimType {
+        match self {
+            ShapeBarShape::Circle => PrimType::Circle,
+            ShapeBarShape::Triangle => PrimType::Triangle,
+            ShapeBarShape::Rect | ShapeBarShape::TextBox => PrimType::Rect 
+        }
+    }
+    fn get_shape(&self, r: &Rect, color: &(u8, u8, u8), fill: bool) -> Shape {
+        const DEFAULT_SIZE: f32 = 30.;
+        let empty = r.c1 == r.c2;
+        let size = 
+            if empty { Point::new(DEFAULT_SIZE, DEFAULT_SIZE) }
+            else { Point::new(r.width(), r.height()) };
+        let poly = DrawPolygon::from_prim(self.to_prim());
+        let offset = r.c1;
+        let mut rect = RotateRect::new(offset, size, 0.);
+        if empty {
+            rect.set_center(&offset);
+        }
+        let prim = if !fill && poly.prim == PrimType::Circle { PrimType::Ring } else { poly.prim };
+        let props = ShapeProps::Polygon(
+            DrawPolygon { rect, fill, prim, ..DrawPolygon::default()});
+        let mut s = Shape::from_props(props);
+        s.color = rgb_to_f32(color.0, color.1, color.2);
+        s
+    }
+}
+
 struct ShapeBar {
-    shapes: HashMap<ShapeID, Shape>,
+    shapes: HashMap<ShapeBarShape, Shape>,
     draw_rect: Rect
     //selected: Option<ShapeID>,
 }
@@ -619,52 +723,38 @@ impl ShapeBar {
             Point { x: viewport.x / 5., y: 0. }, 
             Point { x: 4. * viewport.x / 5., y: viewport.y / 12.});
         let mut shapes = HashMap::new();
-        let ptypes = [PrimType::Circle, PrimType::Triangle, PrimType::Rect];
+        //let ptypes = [PrimType::Circle, PrimType::Triangle, PrimType::Rect];
+        let shape_bar_shapes = [ShapeBarShape::Circle, ShapeBarShape::Triangle, ShapeBarShape::Rect, ShapeBarShape::TextBox];
         let shapes_rect = Rect::new( 
             draw_rect.c1 + Point {x: draw_rect.width() / 4., y: draw_rect.height() / 5.},
             draw_rect.c2 - Point {x: draw_rect.width() / 4., y: draw_rect.height() / 5. } 
         );
-        let npoly = ptypes.len() as u32;
-        for (i, s) in ptypes.iter().enumerate() {
-            let mut poly = DrawPolygon::from_prim(*s);
-            poly.rect.size = Point::new(30.,30.);
-            poly.rect.set_center(&Point {
-                x: shapes_rect.c1.x +
-                    (i as u32 * shapes_rect.width() as u32 / (npoly - 1)) as f32,
-                y: shapes_rect.center().y
-            });
-            let mut shape = Shape::from_props(ShapeProps::Polygon(poly));
-            shape.color = rgb_to_f32(255,0,0);
-            shapes.insert(i as u32, shape);
+        let npoly = shape_bar_shapes.len() as u32;
+        for (i, s) in shape_bar_shapes.iter().enumerate() {
+            let center = Point::new(
+                shapes_rect.c1.x + (i as u32 * shapes_rect.width() as u32 / (npoly - 1)) as f32,
+                shapes_rect.center().y);
+            let rect = Rect::new(center, center);
+            let fill = *s != ShapeBarShape::TextBox;
+            let color = match *s {
+                ShapeBarShape::TextBox => (255, 255, 255),
+                _ => (255, 0, 0)
+            };
+            shapes.insert(s.clone(), s.get_shape(&rect, &color, fill));
         }
         ShapeBar {
             shapes,
             draw_rect,
-            //selected: None
         }
     }
-    fn get_shape(&self, id: ShapeID, r: &Rect, fill: bool) -> Shape {
-        const DEFAULT_SIZE: f32 = 30.;
-        let empty = r.c1 == r.c2;
-        let size = 
-            if empty { Point::new(DEFAULT_SIZE, DEFAULT_SIZE) }
-            else { Point::new(r.width(), r.height()) };
-        let offset = r.c1;
-        let mut rect = RotateRect::new(offset, size, 0.);
-        if empty {
-            rect.set_center(&offset);
-        }
-        let mut props = self.shapes[&id].clone().props; 
-        if let ShapeProps::Polygon(ref poly) = props {
-            let prim = if !fill && poly.prim == PrimType::Circle { PrimType::Ring } else { poly.prim };
-            props = ShapeProps::Polygon(
-                DrawPolygon { rect, fill, prim, ..DrawPolygon::default()});
-        }
-        let mut s = Shape::from_props(props);
-        s.color = rgb_to_f32(255, 0, 0);
-        s
+    fn get_shape(&self, id: ShapeBarShape, r: &Rect, fill: bool) -> Shape {
+        let color = match id {
+            ShapeBarShape::TextBox => (255, 255, 255),
+            _ => (255, 0, 0)
+        };
+        id.get_shape(r, &color, fill)
     }
-    fn click_shape(&mut self, p: &Point, vp: &Point) -> Option<ShapeID> {
+    fn click_shape(&mut self, p: &Point, vp: &Point) -> Option<ShapeBarShape> {
         self.shapes.iter().find(|(_, s)| s.in_bounds(p, vp)).map(|(id, _)| *id)
     }
     fn draw(&self, draw_ctx: &DrawCtx) {

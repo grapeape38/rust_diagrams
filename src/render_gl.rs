@@ -155,7 +155,7 @@ impl SendUniform for glm::Vec2 {
 
 impl SendUniform for glm::Vec3 {
     unsafe fn uniform(&self, loc: GLint) {
-        gl::Uniform2fv(loc, 1, self.as_ptr()); 
+        gl::Uniform3fv(loc, 1, self.as_ptr()); 
     }
 }
 
