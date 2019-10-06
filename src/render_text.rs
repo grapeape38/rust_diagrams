@@ -11,9 +11,8 @@ use std::ffi::CString;
 use gl::types::*;
 
 use crate::render_gl::{Program, Shader, SendUniform, SendUniforms};
-use crate::primitives::{Point, Radians, Rect, DrawCtx};
+use crate::primitives::{Point, Radians, rgb_to_f32, DrawCtx};
 use sem_graph_derive::SendUniforms;
-
 
 fn buffer_char_data() -> (GLuint, GLuint) {
     let mut vao: GLuint = 0;
@@ -88,8 +87,8 @@ impl<'a> TextParams<'a> {
             offset: Point::origin(),
         }
     }
-    pub fn color(mut self, color: &glm::Vec3) -> Self {
-        self.color = color.clone();
+    pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
+        self.color = glm::vec4_to_vec3(&rgb_to_f32(r, g, b));
         self
     }
     pub fn offset(mut self, offset: &Point) -> Self {
@@ -185,6 +184,7 @@ impl RenderText {
                 [orig.x + size.x, orig.y - size.y, 1.0, 0.0]
             ];
             unsafe { 
+                gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
                 gl::BindTexture(gl::TEXTURE_2D, ch.texture);
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.vbo);
                 gl::BufferSubData(gl::ARRAY_BUFFER, 0, 

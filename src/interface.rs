@@ -7,6 +7,7 @@ use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Mod};
 use sdl2::mouse::{Cursor, SystemCursor};
 use std::iter::FromIterator;
+use std::time::SystemTime;
 use crate::primitives::*;
 use crate::primitives::ShapeProps as SP;
 use crate::render_text::RenderText;
@@ -172,7 +173,7 @@ pub enum DragMode {
 #[derive(Clone, Copy)]
 pub enum KeyboardMode {
     KeyboardNone,
-    TextEdit(ShapeID),
+    TextEdit(ShapeID, SystemTime),
 }
 
 #[derive(PartialEq, Clone)]
@@ -238,7 +239,7 @@ impl<'a> AppState<'a> {
             }
             HoverItem::HoverText(tb_id, cursor_pos) => {
                 self.text_boxes.get_mut(&tb_id).map(|tb| tb.set_cursor_pos(cursor_pos));
-                self.key_mode = KeyboardMode::TextEdit(tb_id);
+                self.key_mode = KeyboardMode::TextEdit(tb_id, SystemTime::now());
                 *cursor = SystemCursor::IBeam;
             }
             _ => {}
@@ -377,14 +378,14 @@ impl<'a> AppState<'a> {
                         },
                         DragMode::CreateShape { shape_id, start_pt, last_pt } => {
                             let r = Rect::new(start_pt, last_pt);
-                            //let fill = shape_id != ShapeBarShape::TextBox;
-                            let fill = true;
+                            let fill = shape_id != ShapeBarShape::TextBox;
+                            //let fill = true;
                             let s = self.shape_bar.get_shape(
                                 shape_id, &r, fill);
                             let id = self.draw_list.add(s);
                             if let ShapeBarShape::TextBox = shape_id {
                                 self.text_boxes.insert(id, TextBox::new());
-                                self.key_mode = KeyboardMode::TextEdit(id);
+                                self.key_mode = KeyboardMode::TextEdit(id, SystemTime::now());
                             }
                         }
                         _ => {}
@@ -407,7 +408,7 @@ impl<'a> AppState<'a> {
         }
     }
     pub fn handle_keyboard_event(&mut self, ev: &Event) {
-        if let KeyboardMode::TextEdit(shape_id) = self.key_mode {
+        if let KeyboardMode::TextEdit(shape_id, _) = self.key_mode {
             if let Event::KeyDown { keycode: Some(keycode), .. } = *ev {
                 if let Some(ch) = get_char_from_keycode(keycode) {
                     let rect = self.draw_list.get(&shape_id).unwrap().rect();
@@ -458,12 +459,14 @@ impl<'a> AppState<'a> {
     }
     fn draw_text_boxes(&self) {
         for (id, tb) in self.text_boxes.iter() {
-            let selected = match self.key_mode {
-                KeyboardMode::TextEdit(edit_id) => *id == edit_id,
-                _ => false
+            let select_time = match self.key_mode {
+                KeyboardMode::TextEdit(edit_id, select_time) => {
+                    if edit_id == *id { Some(select_time) } else { None }
+                }
+                _ => None
             };
             let rect = self.draw_list.get(&id).unwrap().rect();
-            tb.draw(&rect, selected, &self.render_text, &self.draw_ctx);
+            tb.draw(&rect, select_time, &self.render_text, &self.draw_ctx);
         }
     }
     pub fn render(&self) {

@@ -146,7 +146,6 @@ fn test_draw() {
     unsafe {
         gl::Viewport(0, 0, VIEWPORT.x as i32, VIEWPORT.y as i32);
         gl::ClearColor(bg_color[0], bg_color[1], bg_color[2], bg_color[3]);
-        gl::Enable(gl::CULL_FACE);
         gl::Enable(gl::BLEND);
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
     }
@@ -154,46 +153,46 @@ fn test_draw() {
     let programs = PrimPrograms::new();
     let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
 
-    //let draw_list = DrawList::new();
+    let draw_list = DrawList::new();
     //let mut draw_list = DrawList::new();
     //add_rotated_shapes(&mut draw_list);
     //add_test_lines(&mut draw_list);
     //add_random_shapes(&mut draw_list, &VIEWPORT, 10);
 
-    //let mut app_state = AppState::new(draw_list, draw_ctx);
+    let mut app_state = AppState::new(draw_list, draw_ctx);
 
     let mut event_pump = sdl.event_pump().unwrap();
     let mut timer = SystemTime::now();
     let render_text = RenderText::new().unwrap();
 
     let test_str = "This is a test sentence!\n let's test this sentence!\n haha! woo hoo!";
-    let purple = glm::vec3(1.0, 0.0, 1.0);
-    let text_params = TextParams::new(test_str).offset(&Point::new(300.,300.)).color(&purple).rot(Degrees(0.).into());
+    let text_params = TextParams::new(test_str).offset(&Point::new(300.,300.)).color(255, 0, 255).rot(Degrees(0.).into());
     'main: loop {
         for event in event_pump.poll_iter() {
-            let _kmod = sdl.keyboard().mod_state();
+            let kmod = sdl.keyboard().mod_state();
             match event {
-                _ev @ Event::MouseMotion{..} => { 
-                    if timer.elapsed().unwrap() >= Duration::from_millis(5) { //don't always handle mouse move
-                        //app_state.handle_mouse_event(&ev, &kmod);
+                ev @ Event::MouseMotion{..} => { 
+                   if timer.elapsed().unwrap() >= Duration::from_millis(5) { //don't always handle mouse move
+                        app_state.handle_mouse_event(&ev, &kmod);
                         timer = SystemTime::now();
                     }
                 }
-                _ev @ Event::MouseButtonDown{..} | 
-                _ev @ Event::MouseButtonUp{..} => { //always handle mouse down and up
-                    //app_state.handle_mouse_event(&ev, &kmod);
+                ev @ Event::MouseButtonDown{..} | 
+                ev @ Event::MouseButtonUp{..} => { //always handle mouse down and up
+                    app_state.handle_mouse_event(&ev, &kmod);
                 }
                 Event::Quit {..} | 
                 Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'main,
-                _ev @ Event::KeyDown {..} => {
-                    //app_state.handle_keyboard_event(&ev);
+                ev @ Event::KeyDown {..} => {
+                    app_state.handle_keyboard_event(&ev);
                 }
                 _ => {},
             }
             unsafe { 
                 gl::Clear(gl::COLOR_BUFFER_BIT); 
             }
-            render_text.draw(&text_params, &draw_ctx);
+            app_state.render();
+            render_text.draw(&text_params, &app_state.draw_ctx);
             window.gl_swap_window();
         }
     }

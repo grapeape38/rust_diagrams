@@ -72,11 +72,11 @@ fn main() {
                 }
                 _ => {},
             }
-            unsafe { 
-                gl::Clear(gl::COLOR_BUFFER_BIT); 
-            }
-            app_state.render();
-            window.gl_swap_window();
         }
+        unsafe { 
+            gl::Clear(gl::COLOR_BUFFER_BIT); 
+        }
+        app_state.render();
+        window.gl_swap_window();
     }
 }

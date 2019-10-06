@@ -2,6 +2,7 @@ extern crate ropey;
 extern crate sdl2;
 
 use ropey::Rope;
+use std::time::{SystemTime, Duration};
 use crate::primitives::{Point, RotateRect, DrawCtx, LineBuilder};
 use crate::render_text::{RenderText, TextParams};
 use sdl2::keyboard::Keycode;
@@ -39,22 +40,22 @@ impl TextBox {
         }
     }
     pub fn insert_char(&mut self, ch: char, draw_rect: &RotateRect, rt: &RenderText) {
-        let cursor_line = self.text_rope.char_to_line(self.cursor.char_idx);
         self.text_rope.insert_char(self.cursor.char_idx, ch);
+        self.cursor.char_idx += 1;
+        let cursor_line = self.text_rope.char_to_line(self.cursor.char_idx);
         let line = self.text_rope.line(cursor_line);
         let cursor_pos = self.cursor.char_idx - self.text_rope.line_to_char(cursor_line);
-        if cursor_pos == line.len_chars() - 1 &&
+        if cursor_pos == line.len_chars() &&
             rt.measure(line.as_str().unwrap(), self.text_scale).x > draw_rect.size.x
         {
-            if self.cursor.char_idx == self.text_rope.len_chars() - 1 {
-                self.text_rope.insert_char(self.cursor.char_idx, '\n');
+            if self.cursor.char_idx == self.text_rope.len_chars() {
+                self.text_rope.insert_char(self.cursor.char_idx-1, '\n');
+                self.cursor.char_idx += 1;
             }
-            self.cursor.char_idx += 1;
         }
-        if self.cursor.char_idx < self.text_rope.len_chars() - 1 {
+        if self.cursor.char_idx < self.text_rope.len_chars() {
             self.format_text(draw_rect, cursor_line, rt);
         }
-        self.cursor.char_idx += 1;
         /*if self.text_rope.len_lines() as f32 * rt.line_height(self.text_scale) > draw_rect.size.y {
             self.top_line += 1;
         }*/
@@ -131,7 +132,7 @@ impl TextBox {
             }
         }
     }
-    pub fn draw(&self, draw_rect: &RotateRect, selected: bool, rt: &RenderText, draw_ctx: &DrawCtx) {
+    pub fn draw(&self, draw_rect: &RotateRect, select_time: Option<SystemTime>, rt: &RenderText, draw_ctx: &DrawCtx) {
         let cursor_line = self.text_rope.char_to_line(self.cursor.char_idx);
         let line_height = rt.line_height(self.text_scale);
         if self.text_rope.len_chars() > 0 {
@@ -143,17 +144,21 @@ impl TextBox {
             let text_params = 
                 TextParams::new(self.text_rope.slice(start_idx..end_idx).as_str().unwrap())
                     .scale(self.text_scale)
+                    //.color(255, 0, 255)
                     .offset(&(draw_rect.offset + Point::new(0., line_height)));
             rt.draw(&text_params, draw_ctx);
         }
-        if selected {
-            let before_str = self.text_rope.slice(self.text_rope.line_to_char(cursor_line)..self.cursor.char_idx).as_str().unwrap();
-            let cursor_pt = draw_rect.offset + Point::new(
-                rt.measure(before_str, self.text_scale).x, 
-                (cursor_line - self.top_line) as f32 * line_height);
-            let cursor_line = LineBuilder::new().points(cursor_pt.x, cursor_pt.y, cursor_pt.x, cursor_pt.y + line_height)
-                .color(0,0,0).get();
-            cursor_line.draw(draw_ctx);
+        if let Some(select_time) = select_time {
+            let millis = select_time.elapsed().unwrap().as_millis() % 1000;
+            if millis < 500 {
+                let before_str = self.text_rope.slice(self.text_rope.line_to_char(cursor_line)..self.cursor.char_idx).as_str().unwrap();
+                let cursor_pt = draw_rect.offset + Point::new(
+                    rt.measure(before_str, self.text_scale).x, 
+                    (cursor_line - self.top_line) as f32 * line_height);
+                let cursor_line = LineBuilder::new().points(cursor_pt.x, cursor_pt.y, cursor_pt.x, cursor_pt.y + line_height)
+                    .color(0,0,0).get();
+                cursor_line.draw(draw_ctx);
+            }
         }
     }
     pub fn needs_format(&self, draw_rect: &RotateRect, start_line: usize, rt: &RenderText) -> bool {
@@ -162,9 +167,12 @@ impl TextBox {
             return true;
         }
         if start_line < self.text_rope.len_lines() - 1 {
-            let next_line_char = self.text_rope.line(start_line + 1).char(0);
-            let next_line_char_width = rt.char_size(next_line_char, self.text_scale).x;
-            return start_line_width + next_line_char_width <= draw_rect.size.x
+            let next_line = self.text_rope.line(start_line + 1);
+            if next_line.len_chars() > 0 {
+                let next_line_char = self.text_rope.line(start_line + 1).char(0);
+                let next_line_char_width = rt.char_size(next_line_char, self.text_scale).x;
+                return start_line_width + next_line_char_width <= draw_rect.size.x
+            }
         }
         false
     }
