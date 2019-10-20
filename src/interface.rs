@@ -12,6 +12,7 @@ use crate::primitives::*;
 use crate::primitives::ShapeProps as SP;
 use crate::render_text::RenderText;
 use crate::textedit::{TextBox, get_char_from_keycode, get_dir_from_keycode};
+use crate::displaytree::{DisplayTree, HandleEvent};
 
 pub struct CursorMap(HashMap<SystemCursor, Cursor>);
 impl CursorMap {
@@ -41,7 +42,7 @@ impl CursorMap {
 
 #[allow(dead_code)]
 impl Shape {
-    fn drag(&mut self, off: &Point) {
+    pub fn drag(&mut self, off: &Point) {
         match self.props {
             SP::Line(ref mut draw_line) => {
                 draw_line.p1 += *off;
@@ -197,6 +198,7 @@ impl<'a> AppState<'a> {
             key_mode: KeyboardMode::KeyboardNone,
             render_text: RenderText::new().unwrap(),
             text_boxes: HashMap::new(),
+            //display_tree: DisplayTree::new(),
             draw_ctx,
             cursors: CursorMap::new()
         }
@@ -214,6 +216,11 @@ impl<'a> AppState<'a> {
     }
     fn fuzzy_hover_rect(&self, p: &Point, vp: &Point) -> Option<ShapeID> {
         self.selection.iter().find(|(_, r)| r.fuzzy_in_bounds(p, vp)).map(|(id, _)| *id)
+    }
+    pub fn handle_event(&mut self, ev: &Event) {
+        /*if let Some(EventResponse(_, rcb)) = self.display_tree.handle_event(ev) {
+            rcb.0(&mut self.display_tree);
+        }*/
     }
     pub fn handle_hover_click(&mut self, pt: &Point, clear_select: bool, cursor: &mut SystemCursor) {
         match self.hover_item {

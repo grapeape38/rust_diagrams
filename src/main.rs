@@ -11,6 +11,9 @@ pub mod interface;
 pub mod render_gl;
 pub mod render_text;
 pub mod primitives;
+#[macro_use]
+pub mod displaytree;
+pub mod app;
 pub mod textedit;
 use interface::{AppState, DrawList};
 use primitives::{*};
@@ -51,32 +54,34 @@ fn main() {
     let mut event_pump = sdl.event_pump().unwrap();
     let mut timer = SystemTime::now();
 
+    const FPS: u64 = 120;
+
     'main: loop {
         for event in event_pump.poll_iter() {
             let kmod = sdl.keyboard().mod_state();
             match event {
-                ev @ Event::MouseMotion{..} => { 
-                    if timer.elapsed().unwrap() >= Duration::from_millis(5) { //don't always handle mouse move
-                        app_state.handle_mouse_event(&ev, &kmod);
-                        timer = SystemTime::now();
-                    }
-                }
-                ev @ Event::MouseButtonDown{..} | 
-                ev @ Event::MouseButtonUp{..} => { //always handle mouse down and up
-                    app_state.handle_mouse_event(&ev, &kmod);
-                }
                 Event::Quit {..} | 
                 Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'main,
+                ev @ Event::MouseMotion{..} | 
+                ev @ Event::MouseButtonDown{..} | 
+                ev @ Event::MouseButtonUp{..} => { 
+                    app_state.handle_event(&ev);
+                }
+                    /*app_state.handle_mouse_event(&ev, &kmod);
+                }
                 ev @ Event::KeyDown {..} => {
                     app_state.handle_keyboard_event(&ev);
-                }
+                }*/
                 _ => {},
             }
         }
         unsafe { 
             gl::Clear(gl::COLOR_BUFFER_BIT); 
         }
-        app_state.render();
-        window.gl_swap_window();
+        if timer.elapsed().unwrap() >= Duration::from_millis(1000 / FPS) {
+            app_state.render();
+            window.gl_swap_window();
+            timer = SystemTime::now();
+        }
     }
 }
