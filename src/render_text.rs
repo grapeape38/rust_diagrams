@@ -11,7 +11,7 @@ use std::ffi::CString;
 use gl::types::*;
 
 use crate::render_gl::{Program, Shader, SendUniform, SendUniforms};
-use crate::primitives::{Point, Radians, rgb_to_f32, DrawCtx};
+use crate::primitives::{Point, rgb_to_f32, DrawCtx, RotateRect, RectTransform};
 use sem_graph_derive::SendUniforms;
 
 fn buffer_char_data() -> (GLuint, GLuint) {
@@ -59,10 +59,15 @@ struct TextUniforms {
 }
 
 impl TextUniforms {
-    fn new(text_color: &glm::Vec3, rot: Radians, orig: &Point, vp: &Point) -> Self {
+    fn new(text_color: &glm::Vec3, r: &RotateRect, off: &Point, vp: &Point) -> Self {
         let projection = glm::ortho(0., vp.x, vp.y, 0., -1., 1.);
+        let orig = r.offset + *off;
         let mut model = glm::translate(&glm::identity(), &orig.to_vec3());
-        model = glm::rotate(&model, -rot.0, &glm::vec3(0.,0.,1.));
+
+        model = glm::translate(&model, &(r.size / 2.).to_vec3());
+        model = glm::rotate(&model, r.rot.0, &glm::vec3(0., 0., 1.));
+        model = glm::translate(&model, &(-r.size / 2.).to_vec3());
+
         let text_color = text_color.clone();
         TextUniforms {text_color, model, projection}
     }
@@ -72,31 +77,21 @@ pub struct TextParams<'a> {
     pub text: &'a str,
     pub color: glm::Vec3,
     pub scale: f32,
-    pub rot: Radians,
-    pub offset: Point,
+    pub rect: &'a RotateRect,
 }
 
 #[allow(dead_code)]
 impl<'a> TextParams<'a> {
-    pub fn new(text: &'a str) -> Self {
+    pub fn new(text: &'a str, rect: &'a RotateRect) -> Self {
         TextParams {
             text,
             color: glm::vec3(0.,0.,0.),
             scale: 1.0,
-            rot: Radians(0.),
-            offset: Point::origin(),
+            rect
         }
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
         self.color = glm::vec4_to_vec3(&rgb_to_f32(r, g, b));
-        self
-    }
-    pub fn offset(mut self, offset: &Point) -> Self {
-        self.offset = offset.clone();
-        self
-    }
-    pub fn rot(mut self, rot: Radians) -> Self {
-        self.rot = rot.clone();
         self
     }
     pub fn scale(mut self, scale: f32) -> Self {
@@ -157,8 +152,10 @@ impl RenderText {
     }
     pub fn draw(&self, params: &TextParams, draw_ctx: &DrawCtx) {
         self.prog.set_used();
-        let (text, color, scale, rot, offset) = (params.text, &params.color, params.scale, params.rot, params.offset);
-        let trans = TextUniforms::new(color, rot, &offset, &draw_ctx.viewport);
+        let (text, color, scale) = (params.text, &params.color, params.scale);
+        let vp = &draw_ctx.viewport;
+        let off = Point::new(0., self.line_height(scale));
+        let trans = TextUniforms::new(color, &params.rect, &off, vp);
         trans.send_uniforms(self.prog.id()).unwrap();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);

@@ -41,7 +41,7 @@ impl Shape {
                 draw_line.p2 += *off;
             }
             SP::Polygon(ref mut draw_poly) => {
-                draw_poly.rect.offset += *off;
+                draw_poly.rect.drag(off);
             }
         }
     }
@@ -159,7 +159,7 @@ pub enum DragMode {
     CreateShape { shape_id: ShapeBarShape, start_pt: Point, last_pt: Point },
     DragShapes { last_pt: Point, click_shape: ShapeID, clear_select: bool },
     DragResize { click_box: ShapeID, drag_vertex: DragVertex },
-    DragRotate { click_box: ShapeID, last_angle: f32 }
+    DragRotate { click_box: ShapeID, last_angle: Radians }
 }
 
 #[derive(Clone, Copy)]
@@ -284,8 +284,8 @@ impl AppState {
                 *cursor = SystemCursor::Hand;
                 if let Some(sbox) = self.selection.get_mut(&click_box) {
                     let angle = sbox.get_rotate_angle(pt, vp);
-                    let curr_angle = 180. * sbox.0.rot / std::f32::consts::PI;
-                    sbox.0.set_radians(curr_angle + angle - *last_angle);
+                    //let curr_angle = 180. * sbox.0.rot / std::f32::consts::PI;
+                    sbox.0.set_radians(sbox.0.rot + angle - *last_angle);
                     self.draw_list.get_mut(&click_box).map(|s| s.set_rect(&sbox.0.clone()));
                     *last_angle = angle;
                 }
@@ -599,7 +599,8 @@ impl ShapeSelectBox {
                 self.drag_side_swap_vertex(drag_vertex, &DragVertex::TopRight, &mut r.c2.y, &mut r.c1.y, &pt.y)
             }
         };
-        self.0 = trans.model_rect_to_screen(&r, &self.0);
+        self.0.set_size(&(r.size() * self.0.size));
+        self.0.set_corner(&trans.model_to_pixel(&r.c1.to_vec4()), vp);
         new_vtx
     }
 
@@ -628,11 +629,11 @@ impl ShapeSelectBox {
         let radi = 12.;
         self.get_rotate_points(vp).iter().any(|p| p.dist(&pt) < radi)
     }
-    fn get_rotate_angle(&self, pt: &Point, vp: &Point) -> f32 {
+    fn get_rotate_angle(&self, pt: &Point, vp: &Point) -> Radians {
         let center = self.0.center(vp);
         let dist = *pt - center;
         let angle = dist.y.atan2(dist.x);
-        angle
+        Radians(angle)
     }
     fn draw_drag_circles(&self, draw_ctx: &DrawCtx) {
         let radi = 7.;
@@ -692,7 +693,7 @@ impl ShapeBarShape {
             else { Point::new(r.width(), r.height()) };
         let poly = DrawPolygon::from_prim(self.to_prim());
         let offset = r.c1;
-        let mut rect = RotateRect::new(offset, size, 0.);
+        let mut rect = RotateRect::new(offset, size, Radians(0.));
         if empty {
             rect.set_center(&offset);
         }

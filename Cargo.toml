@@ -15,6 +15,9 @@ num-traits = "0.2.8"
 num-derive = "0.2"
 freetype-rs = "0.22.0"
 ropey = "1.1.0"
+newtype_derive = "0.1.6"
+macro-attr = "0.2.0" 
+
 sem_graph_derive = { path = "./sem_graph_derive" }
 
 [dependencies.sdl2]

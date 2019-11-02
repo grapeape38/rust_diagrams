@@ -1,16 +1,21 @@
 use gl::types::{GLuint, GLint, GLfloat, GLenum, GLvoid, GLsizeiptr};
 extern crate gl;
 extern crate nalgebra_glm;
+extern crate newtype_derive;
+extern crate macro_attr;
 use nalgebra_glm as glm;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::f32::{self, consts::PI};
-use std::time::SystemTime;
 use PrimType as PT;
 use ShapeProps as SP;
 use crate::render_gl::{Shader, Program, SendUniforms, SendUniform};
 use sem_graph_derive::SendUniforms;
+use macro_attr::{macro_attr, macro_attr_impl};
+use newtype_derive::*;
 use std::rc::Rc;
+use std::cell::RefCell;
+
 
 type PrimMap = HashMap<PrimType, GLuint>;
 type ProgMap = HashMap<PrimType, Rc<Program>>;
@@ -271,9 +276,12 @@ impl std::ops::Div<Point> for Point {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct Radians(pub f32);
-#[derive(Copy, Clone)]
+macro_attr! {
+    #[derive(Copy, Clone, PartialEq, NewtypeAdd!, NewtypeSub!)]
+    pub struct Radians(pub f32);
+}
+
+#[derive(Copy, Clone, PartialEq)]
 pub struct Degrees(pub f32);
 
 impl From<Degrees> for Radians {
@@ -286,34 +294,58 @@ impl From<Degrees> for Radians {
 pub struct RotateRect {
     pub offset: Point,
     pub size: Point,
-    pub rot: f32,
+    pub rot: Radians,
+    pub trans: RefCell<Option<RectTransform>>
 }
 
 impl RotateRect {
-    pub fn new(offset: Point, size: Point, rot: f32) -> Self {
-        RotateRect { offset, size, rot }
+    pub fn new(offset: Point, size: Point, rot: Radians) -> Self {
+        RotateRect { offset, size, rot, trans: RefCell::new(None) }
     }
     pub fn drag(&mut self, offset: &Point) {
         self.offset += *offset;
+        self.trans.replace(None);
     }
     pub fn center(&self, vp: &Point) -> Point {
         self.verts(vp).iter().fold(Point::origin(), |acc, curr| { acc + *curr }) / 4.
     }
-    pub fn set_radians(&mut self, mut radians: f32) {
-        radians -= 2. * PI * (radians / 2. / PI).floor();
-        self.rot = radians * PI / 180.;
+    pub fn set_radians(&mut self, mut radians: Radians) {
+        radians.0 -= 2. * PI * (radians.0 / 2. / PI).floor();
+        self.rot = radians;
+        self.trans.replace(None);
+    }
+    pub fn set_corner(&mut self, c: &Point, vp: &Point) {
+        self.offset = Point::origin();
+        let t = RectTransform::new(&self, vp);
+        let c0 = t.model_to_pixel(&Point::origin().to_vec4());
+        self.offset = *c - c0;
+        self.trans.replace(None);
     }
     pub fn set_center(&mut self, pt: &Point) {
         self.offset = *pt - (self.size / 2.);
+        self.trans.replace(None);
+    }
+    pub fn set_size(&mut self, size: &Point) {
+        self.size = *size;
+        self.trans.replace(None);
     }
     pub fn verts(&self, vp: &Point) -> Vec<Point>  {
-        self.to_poly().verts(vp)
+        let trans = self.transform(vp);
+        let v = PrimType::Rect.verts().chunks(2).map(|s| { 
+            trans.model_to_pixel(&glm::vec4(s[0], s[1], 0.0, 1.0))
+        }).collect();
+        v
     }
     pub fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        self.to_poly().in_bounds(p, vp)
+        PrimType::Rect.in_bounds(&self.transform(vp).pixel_to_model(p).into())
     }
     pub fn builder(&self) -> ShapeBuilder {
         ShapeBuilder { p: self.to_poly(), ..ShapeBuilder::new() }
+    }
+    pub fn transform(&self, vp: &Point) -> RectTransform {
+        let t = self.trans.replace(None).unwrap_or(RectTransform::new(self, vp));
+        self.trans.replace(Some(t.clone()));
+        t
     }
     pub fn to_poly(&self) -> DrawPolygon {
         DrawPolygon {
@@ -327,7 +359,8 @@ impl Default for RotateRect {
         RotateRect {
             offset: Point::origin(),
             size: Point::new(5.,5.),
-            rot: 0.
+            rot: Radians(0.),
+            trans: RefCell::new(None)
         }
     }
 }
@@ -427,7 +460,7 @@ impl DrawPolygon {
         }
     }
     pub fn verts(&self, vp: &Point) -> Vec<Point> {
-        let trans = RectTransform::new(&self.rect, vp);
+        let trans = self.rect.transform(vp);
         let v = self.prim.verts().chunks(2).map(|s| { 
             trans.model_to_pixel(&glm::vec4(s[0], s[1], 0.0, 1.0))
         }).collect();
@@ -435,21 +468,20 @@ impl DrawPolygon {
     }
 }
 
-#[derive(SendUniforms)]
+#[derive(SendUniforms, Clone, PartialEq)]
 pub struct RectTransform {
-    projection: glm::Mat4,
-    model: glm::Mat4,
+    pub projection: glm::Mat4,
+    pub model: glm::Mat4,
 }
     
 #[allow(dead_code)]
 impl RectTransform {
     pub fn new(r: &RotateRect, vp: &Point) -> Self {
         let projection = glm::ortho(0., vp.x, vp.y, 0., -1., 1.);
-        let rad = 180. * r.rot / PI;
         let mut model = glm::translate(&glm::identity(), &r.offset.to_vec3());
 
         model = glm::translate(&model, &(r.size / 2.).to_vec3());
-        model = glm::rotate(&model, rad, &glm::vec3(0., 0., 1.));
+        model = glm::rotate(&model, r.rot.0, &glm::vec3(0., 0., 1.));
         model = glm::translate(&model, &(-r.size / 2.).to_vec3());
 
         model = glm::scale(&model, &glm::vec3(r.size.x, r.size.y, 1.));
@@ -463,21 +495,6 @@ impl RectTransform {
     }
     pub fn pixel_to_model(&self, pt: &Point) -> glm::Vec4 {
         glm::inverse(&self.model) * pt.to_vec4() 
-    }
-    pub fn model_rect_to_screen(&self, model_rect: &Rect,  old_rect: &RotateRect) -> RotateRect {
-        let size = old_rect.size * model_rect.size();
-        let rot = old_rect.rot;
-        let rad = 180. * old_rect.rot / PI;
-
-        let mut model = glm::translate(&glm::identity(), &(size / 2.).to_vec3());
-        model = glm::rotate(&model, rad, &glm::vec3(0., 0., 1.));
-        model = glm::translate(&model, &(-size / 2.).to_vec3());
-        model = glm::scale(&model, &glm::vec3(size.x, size.y, 1.));
-
-        let new_corner = self.model_to_pixel(&model_rect.c1.to_vec4());
-        let new_origin: Point = (model * Point::origin().to_vec4()).into();
-        let offset = new_corner - new_origin;
-        RotateRect { offset, size, rot }
     }
     pub fn model_to_pixel(&self, coords: &glm::Vec4) -> Point {
         (self.model * coords).into()
@@ -588,7 +605,7 @@ impl InBounds for Rect {
 
 impl InBounds for DrawPolygon {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        let trans = RectTransform::new(&self.rect, vp);
+        let trans = self.rect.transform(vp);
         self.prim.in_bounds(&trans.pixel_to_model(p).into())
     }
 }
@@ -660,7 +677,7 @@ impl Shape {
     }
     fn transform(&self, vp: &Point) -> Box<dyn SendUniforms> {
         match &self.props {
-            SP::Polygon(draw_poly) => Box::new(RectTransform::new(&draw_poly.rect, vp)),
+            SP::Polygon(draw_poly) => Box::new(draw_poly.rect.transform(vp)),
             SP::Line(draw_line) => Box::new(LineTransform::new(&draw_line, vp))
         }
     }
@@ -729,8 +746,8 @@ impl ShapeBuilder {
         self.p.rect.offset = Point {x: x as f32,y: y as f32};
         self
     }
-    pub fn rot(mut self, rot: f32) -> ShapeBuilder {
-        self.p.rect.rot = rot;
+    pub fn rot<T: Into<Radians>>(mut self, rot: T) -> ShapeBuilder {
+        self.p.rect.rot = rot.into();
         self
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {

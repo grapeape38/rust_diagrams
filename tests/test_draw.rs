@@ -42,19 +42,19 @@ fn add_rotated_shapes(draw_list: &mut DrawList) {
     draw_list.add(ShapeBuilder::new() 
         .square(200)
         .offset(300,100)
-        .rot(45.)
+        .rot(Degrees(45.))
         .color(255, 255, 255).get()
     );
     draw_list.add(ShapeBuilder::new()
         .square(150)
         .color(200,100,200)
-        .rot(30.)
+        .rot(Degrees(30.))
         .offset(600,200).get()
     );
     draw_list.add(ShapeBuilder::new() 
         .tri(100, 100)
         .offset(200,200)
-        .rot(60.)
+        .rot(Degrees(60.))
         .color(0, 255, 0).get()
     );
 }
@@ -150,16 +150,13 @@ fn test_draw() {
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
     }
 
-    let programs = PrimPrograms::new();
-    let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
-
     let draw_list = DrawList::new();
     //let mut draw_list = DrawList::new();
     //add_rotated_shapes(&mut draw_list);
     //add_test_lines(&mut draw_list);
     //add_random_shapes(&mut draw_list, &VIEWPORT, 10);
 
-    let mut app_state = AppState::new(draw_list, draw_ctx);
+    let mut app_state = AppState::new(&VIEWPORT);
 
     let mut event_pump = sdl.event_pump().unwrap();
     let mut timer = SystemTime::now();

@@ -142,10 +142,10 @@ impl TextBox {
                 else { self.text_rope.line_to_char(self.top_line) };
             let end_idx = self.text_rope.line_to_char(self.top_line + max_lines);
             let text_params = 
-                TextParams::new(self.text_rope.slice(start_idx..end_idx).as_str().unwrap())
-                    .scale(self.text_scale)
+                TextParams::new(self.text_rope.slice(start_idx..end_idx).as_str().unwrap(), draw_rect)
+                    .scale(self.text_scale);
                     //.color(255, 0, 255)
-                    .offset(&(draw_rect.offset + Point::new(0., line_height)));
+                    //.offset(&(draw_rect.offset + Point::new(0., line_height)));
             rt.draw(&text_params, draw_ctx);
         }
         if let Some(select_time) = select_time {

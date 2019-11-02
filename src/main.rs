@@ -10,11 +10,12 @@ use std::time::{SystemTime, Duration};
 pub mod interface;
 pub mod render_gl;
 pub mod render_text;
+#[macro_use]
 pub mod primitives;
 #[macro_use]
 //pub mod app;
 pub mod textedit;
-use interface::{AppState, DrawList};
+use interface::{AppState};
 use primitives::{*};
 
 fn main() {
@@ -58,13 +59,11 @@ fn main() {
                 ev @ Event::MouseMotion{..} | 
                 ev @ Event::MouseButtonDown{..} | 
                 ev @ Event::MouseButtonUp{..} => { 
-                /*    app_state.handle_event(&ev);
-                }*/
                     app_state.handle_mouse_event(&ev, &kmod);
                 }
                 ev @ Event::KeyDown {..} => {
                     app_state.handle_keyboard_event(&ev);
-                }/**/
+                }
                 _ => {},
             }
         }
