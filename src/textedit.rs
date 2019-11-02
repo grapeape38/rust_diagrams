@@ -169,7 +169,7 @@ impl TextBox {
         if start_line < self.text_rope.len_lines() - 1 {
             let next_line = self.text_rope.line(start_line + 1);
             if next_line.len_chars() > 0 {
-                let next_line_char = self.text_rope.line(start_line + 1).char(0);
+                let next_line_char = next_line.char(0);
                 let next_line_char_width = rt.char_size(next_line_char, self.text_scale).x;
                 return start_line_width + next_line_char_width <= draw_rect.size.x
             }

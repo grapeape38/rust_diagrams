@@ -12,8 +12,7 @@ pub mod render_gl;
 pub mod render_text;
 pub mod primitives;
 #[macro_use]
-pub mod displaytree;
-pub mod app;
+//pub mod app;
 pub mod textedit;
 use interface::{AppState, DrawList};
 use primitives::{*};
@@ -43,13 +42,7 @@ fn main() {
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
     }
 
-    let programs = PrimPrograms::new();
-    let draw_ctx = DrawCtx::new(&programs, VIEWPORT);
-    
-
-    let draw_list = DrawList::new();
-
-    let mut app_state = AppState::new(draw_list, draw_ctx);
+    let mut app_state = AppState::new(&VIEWPORT);
 
     let mut event_pump = sdl.event_pump().unwrap();
     let mut timer = SystemTime::now();
@@ -65,13 +58,13 @@ fn main() {
                 ev @ Event::MouseMotion{..} | 
                 ev @ Event::MouseButtonDown{..} | 
                 ev @ Event::MouseButtonUp{..} => { 
-                    app_state.handle_event(&ev);
-                }
-                    /*app_state.handle_mouse_event(&ev, &kmod);
+                /*    app_state.handle_event(&ev);
+                }*/
+                    app_state.handle_mouse_event(&ev, &kmod);
                 }
                 ev @ Event::KeyDown {..} => {
                     app_state.handle_keyboard_event(&ev);
-                }*/
+                }/**/
                 _ => {},
             }
         }

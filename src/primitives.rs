@@ -10,8 +10,10 @@ use PrimType as PT;
 use ShapeProps as SP;
 use crate::render_gl::{Shader, Program, SendUniforms, SendUniform};
 use sem_graph_derive::SendUniforms;
+use std::rc::Rc;
 
 type PrimMap = HashMap<PrimType, GLuint>;
+type ProgMap = HashMap<PrimType, Rc<Program>>;
 
 pub fn prim_map() -> PrimMap {
     let mut m = HashMap::new();
@@ -21,51 +23,35 @@ pub fn prim_map() -> PrimMap {
     m
 }
 
-type ProgMap<'a> = HashMap<PrimType, &'a Program>;
+pub fn prog_map() -> ProgMap {
+    let vert_shader = Shader::from_vert_source(
+        &CString::new(include_str!("shaders/shape2d.vert")).unwrap()
+    ).unwrap();
 
-pub struct PrimPrograms {
-    line_prog: Program,
-    shape_prog: Program,
-}
+    let frag_shader = Shader::from_frag_source(
+        &CString::new(include_str!("shaders/shape2d.frag")).unwrap()
+    ).unwrap();
 
-impl PrimPrograms {
-    pub fn new() -> PrimPrograms {
-        let vert_shader = Shader::from_vert_source(
-            &CString::new(include_str!("shaders/shape2d.vert")).unwrap()
-        ).unwrap();
+    let line_shader = Shader::from_vert_source(
+        &CString::new(include_str!("shaders/line.vert")).unwrap()
+    ).unwrap();
 
-        let frag_shader = Shader::from_frag_source(
-            &CString::new(include_str!("shaders/shape2d.frag")).unwrap()
-        ).unwrap();
+    let line_geom_shader = Shader::from_geom_source(
+        &CString::new(include_str!("shaders/line.geom")).unwrap()
+    ).unwrap();
 
-        let line_shader = Shader::from_vert_source(
-            &CString::new(include_str!("shaders/line.vert")).unwrap()
-        ).unwrap();
+    let mut shaders = vec![vert_shader, frag_shader];
+    let shape_prog = Rc::new(Program::from_shaders(shaders.as_ref()).unwrap());
 
-        let line_geom_shader = Shader::from_geom_source(
-            &CString::new(include_str!("shaders/line.geom")).unwrap()
-        ).unwrap();
+    shaders[0] = line_shader;
+    shaders.insert(1, line_geom_shader);
+    let line_prog = Rc::new(Program::from_shaders(shaders.as_ref()).unwrap());
 
-        let mut shaders = vec![vert_shader, frag_shader];
-        let shape_prog = Program::from_shaders(shaders.as_ref()).unwrap();
-
-        shaders[0] = line_shader;
-        shaders.insert(1, line_geom_shader);
-        let line_prog = Program::from_shaders(shaders.as_ref()).unwrap();
-
-        PrimPrograms {
-            shape_prog,
-            line_prog,
-        }
+    let mut m = HashMap::new();
+    for prim in &[PrimType::Triangle, PT::Circle, PT::Rect, PT::Ring] {
+        m.insert(*prim, Rc::clone(&shape_prog));
     }
-}
-
-pub fn prog_map(programs: &PrimPrograms) -> ProgMap {
-   let mut m = HashMap::new();
-   for prim in &[PrimType::Triangle, PT::Circle, PT::Rect, PT::Ring] {
-        m.insert(*prim, &programs.shape_prog);
-    }
-    m.insert(PT::Line, &programs.line_prog);
+    m.insert(PT::Line, line_prog);
     m
 }
 
@@ -717,15 +703,15 @@ impl InBounds for Shape {
     }
 }
 
-pub struct DrawCtx<'a> {
+pub struct DrawCtx {
     prim_map: PrimMap,
-    prog_map: ProgMap<'a>,
+    prog_map: ProgMap,
     pub viewport: Point,
 }
 
-impl<'a> DrawCtx<'a> {
-    pub fn new(programs: &'a PrimPrograms, viewport: Point) -> DrawCtx<'a> {
-        DrawCtx { prim_map: prim_map(), prog_map: prog_map(programs), viewport }
+impl DrawCtx {
+    pub fn new(viewport: &Point) -> DrawCtx {
+        DrawCtx { prim_map: prim_map(), prog_map: prog_map(), viewport: *viewport }
     }
 }
 

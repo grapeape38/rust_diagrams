@@ -12,7 +12,6 @@ use crate::primitives::*;
 use crate::primitives::ShapeProps as SP;
 use crate::render_text::RenderText;
 use crate::textedit::{TextBox, get_char_from_keycode, get_dir_from_keycode};
-use crate::displaytree::{DisplayTree, HandleEvent};
 
 pub struct CursorMap(HashMap<SystemCursor, Cursor>);
 impl CursorMap {
@@ -32,13 +31,6 @@ impl CursorMap {
         &self.0[cursor]
     }
 }
-
-//impl Rect {
-//    fn drag(&mut self, off: &Point) {
-//        self.c1 += *off;
-//        self.c2 += *off;
-//    }
-//}
 
 #[allow(dead_code)]
 impl Shape {
@@ -147,7 +139,7 @@ impl DrawList {
 
 type ShapeID = u32;
 
-pub struct AppState<'a> {
+pub struct AppState {
     draw_list: DrawList,
     selection: HashMap<ShapeID, ShapeSelectBox>,
     text_boxes: HashMap<ShapeID, TextBox>,
@@ -156,9 +148,8 @@ pub struct AppState<'a> {
     key_mode: KeyboardMode,
     render_text: RenderText,
     hover_item: HoverItem,
-    pub draw_ctx: DrawCtx<'a>,
+    pub draw_ctx: DrawCtx,
     cursors: CursorMap
-    //click_mode: ClickMode,
 }
 
 #[derive(Clone, Copy)]
@@ -187,19 +178,18 @@ pub enum HoverItem {
    HoverRect(ShapeID) 
 }
 
-impl<'a> AppState<'a> {
-    pub fn new(draw_list: DrawList, draw_ctx: DrawCtx<'a>) -> AppState<'a> {
+impl AppState {
+    pub fn new(viewport: &Point) -> AppState {
         AppState {
-            draw_list,
-            shape_bar: ShapeBar::new(&draw_ctx.viewport),
+            draw_list: DrawList::new(),
+            draw_ctx: DrawCtx::new(viewport),
+            shape_bar: ShapeBar::new(viewport),
             selection: HashMap::new(),
             drag_mode: DragMode::DragNone,
             hover_item: HoverItem::HoverNone,
             key_mode: KeyboardMode::KeyboardNone,
             render_text: RenderText::new().unwrap(),
             text_boxes: HashMap::new(),
-            //display_tree: DisplayTree::new(),
-            draw_ctx,
             cursors: CursorMap::new()
         }
     }
@@ -216,11 +206,6 @@ impl<'a> AppState<'a> {
     }
     fn fuzzy_hover_rect(&self, p: &Point, vp: &Point) -> Option<ShapeID> {
         self.selection.iter().find(|(_, r)| r.fuzzy_in_bounds(p, vp)).map(|(id, _)| *id)
-    }
-    pub fn handle_event(&mut self, ev: &Event) {
-        /*if let Some(EventResponse(_, rcb)) = self.display_tree.handle_event(ev) {
-            rcb.0(&mut self.display_tree);
-        }*/
     }
     pub fn handle_hover_click(&mut self, pt: &Point, clear_select: bool, cursor: &mut SystemCursor) {
         match self.hover_item {
@@ -647,7 +632,6 @@ impl ShapeSelectBox {
         let center = self.0.center(vp);
         let dist = *pt - center;
         let angle = dist.y.atan2(dist.x);
-        //println!("{:?}", angle);
         angle
     }
     fn draw_drag_circles(&self, draw_ctx: &DrawCtx) {
