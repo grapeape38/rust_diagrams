@@ -599,8 +599,9 @@ impl ShapeSelectBox {
                 self.drag_side_swap_vertex(drag_vertex, &DragVertex::TopRight, &mut r.c2.y, &mut r.c1.y, &pt.y)
             }
         };
-        self.0.set_size(&(r.size() * self.0.size));
-        self.0.set_corner(&trans.model_to_pixel(&r.c1.to_vec4()), vp);
+        //self.0.set_size(&(r.size() * self.0.size));
+        //self.0.set_corner(&trans.model_to_pixel(&r.c1.to_vec4()), vp);
+        self.0.resize(&r, vp);
         new_vtx
     }
 

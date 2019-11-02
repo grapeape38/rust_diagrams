@@ -11,7 +11,7 @@ use std::ffi::CString;
 use gl::types::*;
 
 use crate::render_gl::{Program, Shader, SendUniform, SendUniforms};
-use crate::primitives::{Point, rgb_to_f32, DrawCtx, RotateRect, RectTransform};
+use crate::primitives::{Point, rgb_to_f32, DrawCtx, Rect, RotateRect, TransformCache, Radians, RectTransform};
 use sem_graph_derive::SendUniforms;
 
 fn buffer_char_data() -> (GLuint, GLuint) {
@@ -51,7 +51,7 @@ struct Character {
     advance: GLint 
 }
 
-#[derive(SendUniforms)]
+#[derive(SendUniforms, PartialEq, Clone)]
 struct TextUniforms {
     text_color: glm::Vec3,
     model: glm::Mat4,
@@ -60,9 +60,13 @@ struct TextUniforms {
 
 impl TextUniforms {
     fn new(text_color: &glm::Vec3, r: &RotateRect, off: &Point, vp: &Point) -> Self {
+        let pct = Point::new(off.x / r.size.x, off.y / r.size.y);
+        let r2 = Rect::new(pct, Point::new(1.,1.));
+        let mut r = r.clone();
+        r.resize(&r2, vp);
+
         let projection = glm::ortho(0., vp.x, vp.y, 0., -1., 1.);
-        let orig = r.offset + *off;
-        let mut model = glm::translate(&glm::identity(), &orig.to_vec3());
+        let mut model = glm::translate(&glm::identity(), &r.offset.to_vec3());
 
         model = glm::translate(&model, &(r.size / 2.).to_vec3());
         model = glm::rotate(&model, r.rot.0, &glm::vec3(0., 0., 1.));
@@ -104,7 +108,8 @@ pub struct RenderText {
     char_map: HashMap<GLchar, Character>,
     vao: GLuint,
     vbo: GLuint,
-    prog: Program
+    prog: Program,
+    trans: TransformCache<(Point, Radians), TextUniforms>
 }
 
 impl RenderText {
@@ -148,14 +153,23 @@ impl RenderText {
         unsafe { gl::BindTexture(gl::TEXTURE_2D, 0); }
         let (vao, vbo) = buffer_char_data();
         let prog = get_char_program()?;
-        Ok(RenderText { char_map, vao, vbo, prog })
+        Ok(RenderText { char_map, vao, vbo, prog, trans: TransformCache::new() })
+    }
+    fn trans(&self, params: &TextParams, vp: &Point) -> TextUniforms {
+        let r = params.rect;
+        let off = Point::new(0., self.line_height(params.scale));
+        self.trans.transform(
+            (r.offset, r.rot),
+            Box::new(move || TextUniforms::new(&params.color, r, &off, vp))
+        )
     }
     pub fn draw(&self, params: &TextParams, draw_ctx: &DrawCtx) {
-        self.prog.set_used();
-        let (text, color, scale) = (params.text, &params.color, params.scale);
-        let vp = &draw_ctx.viewport;
+        /*let vp = &draw_ctx.viewport;
         let off = Point::new(0., self.line_height(scale));
-        let trans = TextUniforms::new(color, &params.rect, &off, vp);
+        let trans = TextUniforms::new(color, &params.rect, vp);*/
+        self.prog.set_used();
+        let (text, scale) = (params.text, params.scale);
+        let trans = self.trans(params, &draw_ctx.viewport);
         trans.send_uniforms(self.prog.id()).unwrap();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);

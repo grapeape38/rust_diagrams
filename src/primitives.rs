@@ -295,16 +295,15 @@ pub struct RotateRect {
     pub offset: Point,
     pub size: Point,
     pub rot: Radians,
-    pub trans: RefCell<Option<RectTransform>>
+    pub trans: TransformCache<(Point, Point, Radians), RectTransform>
 }
 
 impl RotateRect {
     pub fn new(offset: Point, size: Point, rot: Radians) -> Self {
-        RotateRect { offset, size, rot, trans: RefCell::new(None) }
+        RotateRect { offset, size, rot, trans: TransformCache::new() }
     }
     pub fn drag(&mut self, offset: &Point) {
         self.offset += *offset;
-        self.trans.replace(None);
     }
     pub fn center(&self, vp: &Point) -> Point {
         self.verts(vp).iter().fold(Point::origin(), |acc, curr| { acc + *curr }) / 4.
@@ -312,22 +311,23 @@ impl RotateRect {
     pub fn set_radians(&mut self, mut radians: Radians) {
         radians.0 -= 2. * PI * (radians.0 / 2. / PI).floor();
         self.rot = radians;
-        self.trans.replace(None);
     }
     pub fn set_corner(&mut self, c: &Point, vp: &Point) {
         self.offset = Point::origin();
         let t = RectTransform::new(&self, vp);
         let c0 = t.model_to_pixel(&Point::origin().to_vec4());
         self.offset = *c - c0;
-        self.trans.replace(None);
     }
     pub fn set_center(&mut self, pt: &Point) {
         self.offset = *pt - (self.size / 2.);
-        self.trans.replace(None);
     }
     pub fn set_size(&mut self, size: &Point) {
         self.size = *size;
-        self.trans.replace(None);
+    }
+    pub fn resize(&mut self, model_rect: &Rect, vp: &Point) {
+        let corner = self.transform(vp).model_to_pixel(&model_rect.c1.to_vec4());
+        self.set_size(&(model_rect.size() * self.size));
+        self.set_corner(&corner, vp);
     }
     pub fn verts(&self, vp: &Point) -> Vec<Point>  {
         let trans = self.transform(vp);
@@ -343,9 +343,9 @@ impl RotateRect {
         ShapeBuilder { p: self.to_poly(), ..ShapeBuilder::new() }
     }
     pub fn transform(&self, vp: &Point) -> RectTransform {
-        let t = self.trans.replace(None).unwrap_or(RectTransform::new(self, vp));
-        self.trans.replace(Some(t.clone()));
-        t
+        self.trans.transform(
+            (self.offset, self.size, self.rot),
+            Box::new(move || RectTransform::new(self, vp)))
     }
     pub fn to_poly(&self) -> DrawPolygon {
         DrawPolygon {
@@ -360,7 +360,7 @@ impl Default for RotateRect {
             offset: Point::origin(),
             size: Point::new(5.,5.),
             rot: Radians(0.),
-            trans: RefCell::new(None)
+            trans: TransformCache::new() 
         }
     }
 }
@@ -465,6 +465,28 @@ impl DrawPolygon {
             trans.model_to_pixel(&glm::vec4(s[0], s[1], 0.0, 1.0))
         }).collect();
         v
+    }
+}
+
+#[derive(PartialEq, Clone)]
+pub struct TransformCache<C: PartialEq + Clone, T: SendUniforms + PartialEq + Clone> {
+    pub trans: RefCell<Option<(C, T)>>,
+}
+
+impl<C: PartialEq + Clone, T: SendUniforms + PartialEq + Clone> TransformCache<C, T> {
+    pub fn new() -> TransformCache<C, T> {
+        TransformCache { trans: RefCell::new(None) }
+    }
+    pub fn transform<U: FnOnce() -> T>(&self, key: C, create: U) -> T {
+        let trans = {
+            if let Some((cache, tr)) = self.trans.replace(None) {
+                if key != cache { create() }
+                else { tr }
+            }
+            else { create() }
+        };
+        self.trans.replace(Some((key.clone(), trans.clone())));
+        trans
     }
 }
 
