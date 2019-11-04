@@ -11,7 +11,7 @@ use std::ffi::CString;
 use gl::types::*;
 
 use crate::render_gl::{Program, Shader, SendUniform, SendUniforms};
-use crate::primitives::{Point, rgb_to_f32, DrawCtx, Rect, RotateRect, TransformCache, Radians, RectTransform};
+use crate::primitives::{Point, rgb_to_f32, DrawCtx, Rect, RotateRect} ;
 use sem_graph_derive::SendUniforms;
 
 fn buffer_char_data() -> (GLuint, GLuint) {
@@ -52,14 +52,14 @@ struct Character {
 }
 
 #[derive(SendUniforms, PartialEq, Clone)]
-struct TextUniforms {
+pub struct TextUniforms {
     text_color: glm::Vec3,
     model: glm::Mat4,
     projection: glm::Mat4
 }
 
 impl TextUniforms {
-    fn new(text_color: &glm::Vec3, r: &RotateRect, off: &Point, vp: &Point) -> Self {
+    pub fn new(text_color: &glm::Vec4, r: &RotateRect, off: &Point, vp: &Point) -> Self {
         let pct = Point::new(off.x / r.size.x, off.y / r.size.y);
         let r2 = Rect::new(pct, Point::new(1.,1.));
         let mut r = r.clone();
@@ -72,7 +72,7 @@ impl TextUniforms {
         model = glm::rotate(&model, r.rot.0, &glm::vec3(0., 0., 1.));
         model = glm::translate(&model, &(-r.size / 2.).to_vec3());
 
-        let text_color = text_color.clone();
+        let text_color = glm::vec4_to_vec3(text_color);
         TextUniforms {text_color, model, projection}
     }
 }
@@ -81,17 +81,17 @@ pub struct TextParams<'a> {
     pub text: &'a str,
     pub color: glm::Vec3,
     pub scale: f32,
-    pub rect: &'a RotateRect,
+    pub trans: &'a TextUniforms,
 }
 
 #[allow(dead_code)]
 impl<'a> TextParams<'a> {
-    pub fn new(text: &'a str, rect: &'a RotateRect) -> Self {
+    pub fn new(text: &'a str, trans: &'a TextUniforms) -> Self {
         TextParams {
             text,
             color: glm::vec3(0.,0.,0.),
             scale: 1.0,
-            rect
+            trans
         }
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
@@ -109,7 +109,6 @@ pub struct RenderText {
     vao: GLuint,
     vbo: GLuint,
     prog: Program,
-    trans: TransformCache<(Point, Radians), TextUniforms>
 }
 
 impl RenderText {
@@ -153,23 +152,11 @@ impl RenderText {
         unsafe { gl::BindTexture(gl::TEXTURE_2D, 0); }
         let (vao, vbo) = buffer_char_data();
         let prog = get_char_program()?;
-        Ok(RenderText { char_map, vao, vbo, prog, trans: TransformCache::new() })
+        Ok(RenderText { char_map, vao, vbo, prog })
     }
-    fn trans(&self, params: &TextParams, vp: &Point) -> TextUniforms {
-        let r = params.rect;
-        let off = Point::new(0., self.line_height(params.scale));
-        self.trans.transform(
-            (r.offset, r.rot),
-            Box::new(move || TextUniforms::new(&params.color, r, &off, vp))
-        )
-    }
-    pub fn draw(&self, params: &TextParams, draw_ctx: &DrawCtx) {
-        /*let vp = &draw_ctx.viewport;
-        let off = Point::new(0., self.line_height(scale));
-        let trans = TextUniforms::new(color, &params.rect, vp);*/
+    pub fn draw(&self, params: &TextParams, _: &DrawCtx) {
         self.prog.set_used();
-        let (text, scale) = (params.text, params.scale);
-        let trans = self.trans(params, &draw_ctx.viewport);
+        let (text, scale, trans) = (params.text, params.scale, params.trans);
         trans.send_uniforms(self.prog.id()).unwrap();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);

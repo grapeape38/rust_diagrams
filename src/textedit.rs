@@ -2,9 +2,9 @@ extern crate ropey;
 extern crate sdl2;
 
 use ropey::Rope;
-use std::time::{SystemTime, Duration};
-use crate::primitives::{Point, RotateRect, DrawCtx, LineBuilder};
-use crate::render_text::{RenderText, TextParams};
+use std::time::{SystemTime};
+use crate::primitives::{Point, RotateRect, DrawCtx, LineBuilder, TransformCache, Radians, rgb_to_f32};
+use crate::render_text::{RenderText, TextParams, TextUniforms};
 use sdl2::keyboard::Keycode;
 
 #[derive(Debug)]
@@ -22,12 +22,13 @@ pub enum TextCursorDirection {
     Up, Down, Left, Right
 }
 
-#[derive(Debug)]
+//#[derive(Debug)]
 pub struct TextBox {
     text_rope: Rope,
     text_scale: f32,
     top_line: usize,
     cursor: TextCursor,
+    trans: TransformCache<(Point, Radians), TextUniforms>
 }
 
 impl TextBox {
@@ -37,7 +38,20 @@ impl TextBox {
             top_line: 0,
             text_scale: 0.7,
             cursor: TextCursor::new(),
+            trans: TransformCache::new()
         }
+    }
+    pub fn trans(&self, r: &RotateRect, rt: &RenderText, color: &(u8, u8, u8), vp: &Point) -> TextUniforms {
+        let off = Point::new(0., rt.line_height(self.text_scale));
+        self.trans.transform(
+            (r.offset, r.rot),
+            Box::new(move || TextUniforms::new(&rgb_to_f32(color.0, color.1, color.2), r, &off, vp))
+        )
+    }
+    pub fn get_params<'a>(&self, text: &'a str, color: &(u8, u8, u8), trans: &'a TextUniforms) 
+        -> TextParams<'a> 
+    {
+        TextParams::new(text, trans).color(color.0, color.1, color.2).scale(self.text_scale)
     }
     pub fn insert_char(&mut self, ch: char, draw_rect: &RotateRect, rt: &RenderText) {
         self.text_rope.insert_char(self.cursor.char_idx, ch);
@@ -75,10 +89,10 @@ impl TextBox {
             self.format_text(draw_rect, cursor_line, rt);
         }
     }
-    pub fn hover_text(&self, pt: &Point, rect: &RotateRect, rt: &RenderText) -> Option<usize> {
-        let n_line = ((pt.y - rect.offset.y) / rt.line_height(self.text_scale)) as i32;
-        let x_off = pt.x - rect.offset.x;
-        if x_off < 0. || x_off > rect.size.x || 
+    pub fn hover_text(&self, pt: &Point, rect: &RotateRect, rt: &RenderText, vp: &Point) -> Option<usize> {
+        let pt2 = rect.transform(vp).pixel_to_model(pt) * rect.size.x;
+        let n_line = (pt2.y / rt.line_height(self.text_scale)) as i32;
+        if pt2.x < 0. || pt2.x > rect.size.x || 
             n_line < 0 || n_line >= self.text_rope.len_lines() as i32 {
             return None;
         }
@@ -89,7 +103,7 @@ impl TextBox {
         let mut line_x = 0.;
         (start_char+1..end_char)
             .take_while(|i| { 
-                line_x += rt.char_size_w_advance(self.text_rope.char(i-1), self.text_scale).x; line_x <= x_off}).last()
+                line_x += rt.char_size_w_advance(self.text_rope.char(i-1), self.text_scale).x; line_x <= pt2.x}).last()
     } 
     pub fn set_cursor_pos(&mut self, cursor_idx: usize) {
         self.cursor.char_idx = std::cmp::max(0, std::cmp::min(self.text_rope.len_chars(), cursor_idx));
@@ -141,22 +155,22 @@ impl TextBox {
             let start_idx = if self.text_rope.len_lines() == 0 { 0 } 
                 else { self.text_rope.line_to_char(self.top_line) };
             let end_idx = self.text_rope.line_to_char(self.top_line + max_lines);
-            let text_params = 
-                TextParams::new(self.text_rope.slice(start_idx..end_idx).as_str().unwrap(), draw_rect)
-                    .scale(self.text_scale);
-                    //.color(255, 0, 255)
-                    //.offset(&(draw_rect.offset + Point::new(0., line_height)));
-            rt.draw(&text_params, draw_ctx);
+            let color = (0,0,0);
+            let trans = self.trans(draw_rect, rt, &color, &draw_ctx.viewport);
+            let text = self.text_rope.slice(start_idx..end_idx).as_str().unwrap();
+            rt.draw(&self.get_params(text, &color, &trans), draw_ctx);
         }
         if let Some(select_time) = select_time {
             let millis = select_time.elapsed().unwrap().as_millis() % 1000;
             if millis < 500 {
                 let before_str = self.text_rope.slice(self.text_rope.line_to_char(cursor_line)..self.cursor.char_idx).as_str().unwrap();
-                let cursor_pt = draw_rect.offset + Point::new(
-                    rt.measure(before_str, self.text_scale).x, 
-                    (cursor_line - self.top_line) as f32 * line_height);
-                let cursor_line = LineBuilder::new().points(cursor_pt.x, cursor_pt.y, cursor_pt.x, cursor_pt.y + line_height)
-                    .color(0,0,0).get();
+                let mut cursor_pt1 = Point::new(
+                    rt.measure(before_str, self.text_scale).x / draw_rect.size.x, 
+                    (cursor_line - self.top_line) as f32 * line_height / draw_rect.size.y);
+                let mut cursor_pt2 = Point::new(cursor_pt1.x, cursor_pt1.y + line_height / draw_rect.size.y);
+                cursor_pt1 = draw_rect.transform(&draw_ctx.viewport).model_to_pixel(&cursor_pt1.to_vec4());
+                cursor_pt2 = draw_rect.transform(&draw_ctx.viewport).model_to_pixel(&cursor_pt2.to_vec4());
+                let cursor_line = LineBuilder::new().points2(&cursor_pt1, &cursor_pt2).get();
                 cursor_line.draw(draw_ctx);
             }
         }

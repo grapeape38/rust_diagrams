@@ -5,4 +5,5 @@ pub mod render_text;
 //pub mod displaytree;
 //pub mod app;
 pub mod primitives;
+pub mod hexcolor;
 pub mod textedit;

@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::f32::{self, consts::PI};
 use PrimType as PT;
-use ShapeProps as SP;
 use crate::render_gl::{Shader, Program, SendUniforms, SendUniform};
+use crate::hexcolor::HexColor;
 use sem_graph_derive::SendUniforms;
 use macro_attr::{macro_attr, macro_attr_impl};
 use newtype_derive::*;
@@ -22,7 +22,7 @@ type ProgMap = HashMap<PrimType, Rc<Program>>;
 
 pub fn prim_map() -> PrimMap {
     let mut m = HashMap::new();
-    for prim in &[PT::Triangle, PT::Circle, PT::Rect, PT::Ring, PT::Line] {
+    for prim in &[PT::Triangle, PT::Circle, PT::Rect, PT::Ring, PT::Line, PT::HexColor] {
         m.insert(*prim, prim.buffer_data());
     }
     m
@@ -45,6 +45,14 @@ pub fn prog_map() -> ProgMap {
         &CString::new(include_str!("shaders/line.geom")).unwrap()
     ).unwrap();
 
+    let shapecolor_vert = Shader::from_vert_source(
+        &CString::new(include_str!("shaders/shapecolor.vert")).unwrap()
+    ).unwrap();
+
+    let shapecolor_frag = Shader::from_frag_source(
+        &CString::new(include_str!("shaders/shapecolor.frag")).unwrap()
+    ).unwrap();
+
     let mut shaders = vec![vert_shader, frag_shader];
     let shape_prog = Rc::new(Program::from_shaders(shaders.as_ref()).unwrap());
 
@@ -52,11 +60,16 @@ pub fn prog_map() -> ProgMap {
     shaders.insert(1, line_geom_shader);
     let line_prog = Rc::new(Program::from_shaders(shaders.as_ref()).unwrap());
 
+    shaders = vec![shapecolor_vert, shapecolor_frag];
+    let shapecolor_prog = Rc::new(Program::from_shaders(shaders.as_ref()).unwrap());
+
     let mut m = HashMap::new();
     for prim in &[PrimType::Triangle, PT::Circle, PT::Rect, PT::Ring] {
         m.insert(*prim, Rc::clone(&shape_prog));
     }
     m.insert(PT::Line, line_prog);
+    m.insert(PT::HexColor, shapecolor_prog);
+
     m
 }
 
@@ -67,6 +80,7 @@ pub enum PrimType {
     Ring,
     Rect,
     Line,
+    HexColor,
 }
 
 const NCIRCLE_VERTS: usize = 30;
@@ -104,10 +118,26 @@ impl PrimType {
             PT::Line => {
                vec![0.0, 0.0]
             }
+            PT::HexColor => {
+                let colors = &[
+                    [255., 0., 0.],
+                    [0., 255., 0.],
+                    [0., 0., 255.],
+                ];
+                PT::Triangle.verts().chunks(2).enumerate().map(|(i, c)|
+                    vec![c[0], c[1],
+                    colors[i][0] / 255., colors[i][1] / 255., colors[i][2] / 255.]
+                ).flatten().collect()
+            }
         }
     }
     fn buffer_data(&self) -> GLuint {
-        unsafe { buffer_verts(&self.verts().as_slice()) }
+        unsafe {
+            match self {
+                PT::HexColor => { HexColor::buffer_verts(&self.verts().as_slice()) }
+                _ => buffer_verts(&self.verts().as_slice()) 
+            }
+        }
     }
     fn mode(&self) -> GLenum {
         match self {
@@ -115,16 +145,18 @@ impl PrimType {
             PT::Rect => gl::QUADS,
             PT::Circle => gl::TRIANGLE_FAN,
             PT::Ring => gl::LINE_STRIP, 
-            PT::Line => gl::POINTS
+            PT::Line => gl::POINTS,
+            PT::HexColor=> gl::TRIANGLES,
         }
     }
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         match self {
             PT::Triangle => 3,
             PT::Rect => 4,
             PT::Circle => NCIRCLE_VERTS + 1, 
             PT::Ring => NCIRCLE_VERTS, 
-            PT::Line => 1
+            PT::Line => 1,
+            PT::HexColor => 3 
         }
     }
     fn in_bounds(&self, p: &Point) -> bool {
@@ -132,7 +164,7 @@ impl PrimType {
             PT::Triangle => {
                 p.x >= 0.0 && p.x <= 1.0 && p.y >= f32::abs(p.x - 0.5) && p.y <= 1.0
             }
-            PT::Circle | PT::Ring => {
+            PT::Circle | PT::Ring | PT::HexColor => {
                 (*p - Point{x: 0.5, y: 0.5}).mag() <= 0.5
             }
             PT::Rect => {
@@ -349,7 +381,7 @@ impl RotateRect {
     }
     pub fn to_poly(&self) -> DrawPolygon {
         DrawPolygon {
-            prim: PrimType::Rect, rect: self.clone(), fill: false
+            prim: PrimType::Rect, rect: self.clone(), ..DrawPolygon::default() 
         }
     }
 }
@@ -408,6 +440,7 @@ pub struct DrawLine {
     pub p1: Point, 
     pub p2: Point,
     pub line_width: f32,
+    pub color: glm::Vec4
 }
 
 impl DrawLine {
@@ -423,6 +456,21 @@ impl DrawLine {
     pub fn max_y(&mut self) -> &mut f32 {
         if self.p1.y > self.p2.y { &mut self.p1.y } else { &mut self.p2.y }
     }
+    pub fn draw(&self, ctx: &DrawCtx) {
+        let ptype = &PrimType::Line;
+        ctx.prog_map[ptype].set_used();
+        let trans = LineTransform::new(self, &ctx.viewport);
+        let prog_id = ctx.prog_map[&ptype].id();
+        let vao = ctx.prim_map[&ptype];
+        let line_width = self.line_width; 
+        unsafe {
+            trans.send_uniforms(prog_id).unwrap();
+            self.color.send_uniform(prog_id, "color").unwrap();
+            gl::LineWidth(line_width as GLfloat);
+            gl::BindVertexArray(vao);
+            gl::DrawArrays(gl::POINTS, 0, 1);
+        }
+    }
 }
 
 impl Default for DrawLine {
@@ -430,7 +478,8 @@ impl Default for DrawLine {
         DrawLine {
             p1: Point::origin(),
             p2: Point::origin(),
-            line_width: 3.
+            line_width: 3.,
+            color: glm::vec4(0., 0., 0., 1.)
         }
     }
 }
@@ -439,7 +488,8 @@ impl Default for DrawLine {
 pub struct DrawPolygon {
     pub prim: PrimType,
     pub fill: bool,
-    pub rect: RotateRect
+    pub rect: RotateRect,
+    pub color: glm::Vec4
 }
 
 impl Default for DrawPolygon {
@@ -448,6 +498,7 @@ impl Default for DrawPolygon {
             prim: PT::Triangle,
             rect: RotateRect::default(),
             fill: true,
+            color: glm::vec4(0., 0., 0., 1.)
         }
     }
 }
@@ -465,6 +516,21 @@ impl DrawPolygon {
             trans.model_to_pixel(&glm::vec4(s[0], s[1], 0.0, 1.0))
         }).collect();
         v
+    }
+    pub fn draw(&self, ctx: &DrawCtx) {
+        let ptype = &self.prim;
+        ctx.prog_map[ptype].set_used();
+        let trans = self.rect.transform(&ctx.viewport);
+        let prog_id = ctx.prog_map[ptype].id();
+        let vao = ctx.prim_map[ptype];
+        let poly_mode: GLuint = if self.fill { gl::FILL } else { gl::LINE };
+        unsafe {
+            gl::PolygonMode(gl::FRONT_AND_BACK, poly_mode); 
+            trans.send_uniforms(prog_id).unwrap();
+            self.color.send_uniform(prog_id, "color").unwrap();
+            gl::BindVertexArray(vao);
+            gl::DrawArrays(ptype.mode(), 0, ptype.size() as i32);
+        }
     }
 }
 
@@ -601,6 +667,18 @@ impl Rect {
     pub fn bl(&self) -> Point {
         Point{x: *self.min_x(), y: *self.max_y()}
     }
+    pub fn left_center(&self) -> Point {
+        Point {x: *self.min_x(), y: (self.min_y() + self.max_y()) / 2. }
+    }
+    pub fn top_center(&self) -> Point {
+        Point {x: (self.min_x() + self.max_x()) / 2., y: *self.min_y() }
+    }
+    pub fn right_center(&self) -> Point {
+        Point {x: *self.max_x(), y: (self.min_y() + self.max_y()) / 2. }
+    }
+    pub fn bot_center(&self) -> Point {
+        Point {x: (self.min_x() + self.max_x()) / 2., y: *self.max_y() }
+    }
     pub fn min_x(&self) -> &f32 {
         &self.c1.x
     }
@@ -654,97 +732,55 @@ impl InBounds for DrawLine {
 }
 
 #[derive(Clone, PartialEq)]
-pub enum ShapeProps {
+pub enum Shape {
     Line(DrawLine),
     Polygon(DrawPolygon)
 }
 
-#[derive(Clone, PartialEq)]
-pub struct Shape {
-    pub props: ShapeProps,
-    pub color: glm::Vec4,
-}
-
-impl Default for Shape {
-    fn default() -> Self {
-        Shape {
-            props: ShapeProps::Polygon(DrawPolygon::default()),
-            color: glm::vec4(0.,0.,0.,1.),
-        }
-    }
-}
-
 impl Shape {
-    pub fn from_props(props: ShapeProps) -> Self {
-        Shape {
-            props,
-            ..Shape::default()
-        }
-    }
     pub fn verts(&self, vp: &Point) -> Vec<Point> {
-        match &self.props {
-            SP::Polygon(ref draw_poly) => {
+        match self {
+            Shape::Polygon(ref draw_poly) => {
                 draw_poly.verts(vp)
             }
-            SP::Line(draw_line) => {
+            Shape::Line(draw_line) => {
                 vec![draw_line.p1, draw_line.p2]
             }
         }
     }
     pub fn rect(&self) -> RotateRect {
-        match self.props {
-            SP::Polygon(ref draw_poly) => draw_poly.rect.clone(),
-            SP::Line(_) => RotateRect::default()
-        }
-    }
-    fn transform(&self, vp: &Point) -> Box<dyn SendUniforms> {
-        match &self.props {
-            SP::Polygon(draw_poly) => Box::new(draw_poly.rect.transform(vp)),
-            SP::Line(draw_line) => Box::new(LineTransform::new(&draw_line, vp))
+        match self {
+            Shape::Polygon(ref draw_poly) => draw_poly.rect.clone(),
+            Shape::Line(_) => RotateRect::default()
         }
     }
     pub fn draw(&self, ctx: &DrawCtx) {
-        ctx.prog_map[&self.prim_type()].set_used();
-        let trans = self.transform(&ctx.viewport);
-        let ptype = self.prim_type();
-        let prog_id = ctx.prog_map[&ptype].id();
-        let vao = ctx.prim_map[&ptype];
-        let line_width = if let SP::Line(ref draw_line) = self.props { draw_line.line_width } else { 3. };
-        if let SP::Polygon(ref draw_poly) = self.props {
-            let poly_mode: GLuint = 
-                if draw_poly.fill { gl::FILL } else { gl::LINE };
-            unsafe { gl::PolygonMode(gl::FRONT_AND_BACK, poly_mode); }
-        }
-        unsafe {
-            trans.send_uniforms(prog_id).unwrap();
-            self.color.send_uniform(prog_id, "color").unwrap();
-            gl::LineWidth(line_width as GLfloat);
-            gl::BindVertexArray(vao);
-            gl::DrawArrays(self.mode(), 0, self.size());
+        match self {
+            Shape::Polygon(draw_poly) => draw_poly.draw(ctx),
+            Shape::Line(draw_line) => draw_line.draw(ctx)
         }
     }
-    pub fn prim_type(&self) -> PrimType {
-        match &self.props {
-            SP::Polygon(draw_poly) => draw_poly.prim,
-            SP::Line(_) => PT::Line
-        }
+    pub fn rgb(&self) -> (u8, u8, u8) {
+        let color = match self {
+            Shape::Polygon(draw_poly) => draw_poly.color,
+            Shape::Line(draw_line) => draw_line.color
+        };
+        ((color[0] * 255.) as u8, (color[1] * 255.) as u8, (color[2] * 255.) as u8)
     }
-    fn mode(&self) -> GLenum { self.prim_type().mode() }
-    fn size(&self) -> GLint { self.prim_type().size() as GLint }
 }
 
 impl InBounds for Shape {
     fn in_bounds(&self, p: &Point, vp: &Point) -> bool {
-        match &self.props {
-            SP::Polygon(draw_poly) => draw_poly.in_bounds(p,vp),
-            SP::Line(draw_line) => draw_line.in_bounds(p,vp)
+        match self {
+            Shape::Polygon(draw_poly) => draw_poly.in_bounds(p,vp),
+            Shape::Line(draw_line) => draw_line.in_bounds(p,vp)
         }
     }
 }
 
 pub struct DrawCtx {
-    prim_map: PrimMap,
-    prog_map: ProgMap,
+    pub prim_map: PrimMap,
+    pub prog_map: ProgMap,
     pub viewport: Point,
 }
 
@@ -755,14 +791,13 @@ impl DrawCtx {
 }
 
 pub struct ShapeBuilder {
-    s: Shape,
     p: DrawPolygon
 }
 
 #[allow(dead_code)]
 impl ShapeBuilder {
     pub fn new() -> Self {
-        ShapeBuilder { s: Shape::default(), p: DrawPolygon::default() }
+        ShapeBuilder { p: DrawPolygon::default() }
     }
     pub fn offset(mut self, x: i32, y: i32) -> Self {
         self.p.rect.offset = Point {x: x as f32,y: y as f32};
@@ -773,11 +808,11 @@ impl ShapeBuilder {
         self
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
-        self.s.color = rgb_to_f32(r,g,b);
+        self.p.color = rgb_to_f32(r,g,b);
         self
     }
     pub fn alpha(mut self, a: f32) -> Self {
-        self.s.color[3] = a;
+        self.p.color[3] = a;
         self
     }
     pub fn circle(mut self, rad: u32) -> Self {
@@ -820,20 +855,23 @@ impl ShapeBuilder {
                 self.p.prim = PT::Circle
             }
         }
-        self.s.props = SP::Polygon(self.p); 
-        self.s 
+        Shape::Polygon(self.p)
     }
 }
 
 pub struct LineBuilder {
-    s: Shape,
     l: DrawLine
 }
 
 #[allow(dead_code)]
 impl LineBuilder {
     pub fn new() -> LineBuilder {
-        LineBuilder { s: Shape::default(), l: DrawLine::default() }
+        LineBuilder { l: DrawLine::default() }
+    }
+    pub fn points2(mut self, p1: &Point, p2: &Point) -> Self {
+        self.l.p1 = *p1;
+        self.l.p2 = *p2;
+        self
     }
     pub fn points(mut self, x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
         self.l.p1 = Point {x: x1, y: y1};
@@ -841,18 +879,18 @@ impl LineBuilder {
         self
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
-        self.s.color = rgb_to_f32(r,g,b);
+        self.l.color = rgb_to_f32(r,g,b);
         self
     }
     pub fn alpha(mut self, a: f32) -> Self {
-        self.s.color[3] = a;
+        self.l.color[3] = a;
         self
     }
     pub fn line_width(mut self, width: f32) -> Self {
         self.l.line_width = width;
         self
     }
-    pub fn get(mut self) -> Shape { self.s.props = SP::Line(self.l); self.s }
+    pub fn get(self) -> Shape { Shape::Line(self.l) }
 }
 
 pub fn rgb_to_f32(r: u8, g: u8, b: u8) -> glm::Vec4 {

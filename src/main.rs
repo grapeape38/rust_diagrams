@@ -12,6 +12,7 @@ pub mod render_gl;
 pub mod render_text;
 #[macro_use]
 pub mod primitives;
+pub mod hexcolor;
 #[macro_use]
 //pub mod app;
 pub mod textedit;
