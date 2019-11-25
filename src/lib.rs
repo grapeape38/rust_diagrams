@@ -6,4 +6,5 @@ pub mod render_text;
 //pub mod app;
 pub mod primitives;
 pub mod hexcolor;
+pub mod button;
 pub mod textedit;

@@ -189,7 +189,7 @@ fn test_draw() {
                 gl::Clear(gl::COLOR_BUFFER_BIT); 
             }
             app_state.render();
-            render_text.draw(&text_params, &app_state.draw_ctx);
+            render_text.draw(&text_params);
             window.gl_swap_window();
         }
     }

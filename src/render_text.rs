@@ -11,7 +11,7 @@ use std::ffi::CString;
 use gl::types::*;
 
 use crate::render_gl::{Program, Shader, SendUniform, SendUniforms};
-use crate::primitives::{Point, rgb_to_f32, DrawCtx, Rect, RotateRect} ;
+use crate::primitives::{Point, rgb_to_f32, Radians, Rect, RotateRect, TransformCache, DrawCtx} ;
 use sem_graph_derive::SendUniforms;
 
 fn buffer_char_data() -> (GLuint, GLuint) {
@@ -77,30 +77,38 @@ impl TextUniforms {
     }
 }
 
-pub struct TextParams<'a> {
-    pub text: &'a str,
-    pub color: glm::Vec3,
+pub type TextUniformsCache = TransformCache<(Point, Radians), TextUniforms>;
+
+pub struct TextParams {
+    pub color: glm::Vec4,
     pub scale: f32,
-    pub trans: &'a TextUniforms,
+    pub trans: TextUniformsCache 
 }
 
 #[allow(dead_code)]
-impl<'a> TextParams<'a> {
-    pub fn new(text: &'a str, trans: &'a TextUniforms) -> Self {
+impl TextParams {
+    pub fn new() -> Self {
         TextParams {
-            text,
-            color: glm::vec3(0.,0.,0.),
+            color: glm::vec4(0.,0.,0.,0.),
             scale: 1.0,
-            trans
+            trans: TextUniformsCache::new()
         }
     }
     pub fn color(mut self, r: u8, g: u8, b: u8) -> Self {
-        self.color = glm::vec4_to_vec3(&rgb_to_f32(r, g, b));
+        self.color = rgb_to_f32(r, g, b);
         self
     }
     pub fn scale(mut self, scale: f32) -> Self {
         self.scale = scale;
         self
+    }
+    pub fn get_uniforms(&self, r: &RotateRect, rt: &RenderText, vp: &Point) -> TextUniforms
+    {
+        let off = Point::new(0., rt.line_height(self.scale));
+        self.trans.transform(
+            (r.offset, r.rot),
+            Box::new(move || TextUniforms::new(&self.color, r, &off, vp))
+        )
     }
 }
 
@@ -154,10 +162,10 @@ impl RenderText {
         let prog = get_char_program()?;
         Ok(RenderText { char_map, vao, vbo, prog })
     }
-    pub fn draw(&self, params: &TextParams, _: &DrawCtx) {
+    pub fn draw(&self, text: &str, params: &TextParams, rect: &RotateRect, ctx: &DrawCtx) {
+        let (scale, uniforms) = (params.scale, params.get_uniforms(&rect, self, &ctx.viewport));
         self.prog.set_used();
-        let (text, scale, trans) = (params.text, params.scale, params.trans);
-        trans.send_uniforms(self.prog.id()).unwrap();
+        uniforms.send_uniforms(self.prog.id()).unwrap();
         unsafe {
             gl::ActiveTexture(gl::TEXTURE0);
             gl::BindVertexArray(self.vao);

@@ -3,8 +3,8 @@ extern crate sdl2;
 
 use ropey::Rope;
 use std::time::{SystemTime};
-use crate::primitives::{Point, RotateRect, DrawCtx, LineBuilder, TransformCache, Radians, rgb_to_f32};
-use crate::render_text::{RenderText, TextParams, TextUniforms};
+use crate::primitives::{Point, RotateRect, DrawCtx, rgb_to_f32};
+use crate::render_text::{RenderText, TextParams};
 use sdl2::keyboard::Keycode;
 
 #[derive(Debug)]
@@ -25,10 +25,9 @@ pub enum TextCursorDirection {
 //#[derive(Debug)]
 pub struct TextBox {
     text_rope: Rope,
-    text_scale: f32,
     top_line: usize,
     cursor: TextCursor,
-    trans: TransformCache<(Point, Radians), TextUniforms>
+    text_params: TextParams
 }
 
 impl TextBox {
@@ -36,22 +35,9 @@ impl TextBox {
         TextBox {
             text_rope: Rope::new(),
             top_line: 0,
-            text_scale: 0.7,
             cursor: TextCursor::new(),
-            trans: TransformCache::new()
+            text_params: TextParams::new().color(0,0,0).scale(0.7)
         }
-    }
-    pub fn trans(&self, r: &RotateRect, rt: &RenderText, color: &(u8, u8, u8), vp: &Point) -> TextUniforms {
-        let off = Point::new(0., rt.line_height(self.text_scale));
-        self.trans.transform(
-            (r.offset, r.rot),
-            Box::new(move || TextUniforms::new(&rgb_to_f32(color.0, color.1, color.2), r, &off, vp))
-        )
-    }
-    pub fn get_params<'a>(&self, text: &'a str, color: &(u8, u8, u8), trans: &'a TextUniforms) 
-        -> TextParams<'a> 
-    {
-        TextParams::new(text, trans).color(color.0, color.1, color.2).scale(self.text_scale)
     }
     pub fn insert_char(&mut self, ch: char, draw_rect: &RotateRect, rt: &RenderText) {
         self.text_rope.insert_char(self.cursor.char_idx, ch);
@@ -60,7 +46,7 @@ impl TextBox {
         let line = self.text_rope.line(cursor_line);
         let cursor_pos = self.cursor.char_idx - self.text_rope.line_to_char(cursor_line);
         if cursor_pos == line.len_chars() &&
-            rt.measure(line.as_str().unwrap(), self.text_scale).x > draw_rect.size.x
+            rt.measure(line.as_str().unwrap(), self.text_params.scale).x > draw_rect.size.x
         {
             if self.cursor.char_idx == self.text_rope.len_chars() {
                 self.text_rope.insert_char(self.cursor.char_idx-1, '\n');
@@ -70,7 +56,7 @@ impl TextBox {
         if self.cursor.char_idx < self.text_rope.len_chars() {
             self.format_text(draw_rect, cursor_line, rt);
         }
-        /*if self.text_rope.len_lines() as f32 * rt.line_height(self.text_scale) > draw_rect.size.y {
+        /*if self.text_rope.len_lines() as f32 * rt.line_height(self.text_params.scale) > draw_rect.size.y {
             self.top_line += 1;
         }*/
     }
@@ -91,7 +77,7 @@ impl TextBox {
     }
     pub fn hover_text(&self, pt: &Point, rect: &RotateRect, rt: &RenderText, vp: &Point) -> Option<usize> {
         let pt2 = rect.transform(vp).pixel_to_model(pt) * rect.size.x;
-        let n_line = (pt2.y / rt.line_height(self.text_scale)) as i32;
+        let n_line = (pt2.y / rt.line_height(self.text_params.scale)) as i32;
         if pt2.x < 0. || pt2.x > rect.size.x || 
             n_line < 0 || n_line >= self.text_rope.len_lines() as i32 {
             return None;
@@ -103,7 +89,7 @@ impl TextBox {
         let mut line_x = 0.;
         (start_char+1..end_char)
             .take_while(|i| { 
-                line_x += rt.char_size_w_advance(self.text_rope.char(i-1), self.text_scale).x; line_x <= pt2.x}).last()
+                line_x += rt.char_size_w_advance(self.text_rope.char(i-1), self.text_params.scale).x; line_x <= pt2.x}).last()
     } 
     pub fn set_cursor_pos(&mut self, cursor_idx: usize) {
         self.cursor.char_idx = std::cmp::max(0, std::cmp::min(self.text_rope.len_chars(), cursor_idx));
@@ -146,37 +132,34 @@ impl TextBox {
             }
         }
     }
-    pub fn draw(&self, draw_rect: &RotateRect, select_time: Option<SystemTime>, rt: &RenderText, draw_ctx: &DrawCtx) {
+    pub fn draw(&self, draw_rect: &RotateRect, select_time: Option<SystemTime>, draw_ctx: &DrawCtx) {
         let cursor_line = self.text_rope.char_to_line(self.cursor.char_idx);
-        let line_height = rt.line_height(self.text_scale);
+        let rt = &draw_ctx.render_text;
+        let line_height = rt.line_height(self.text_params.scale);
         if self.text_rope.len_chars() > 0 {
             let mut max_lines = (draw_rect.size.y / line_height) as usize;
             max_lines = std::cmp::min(max_lines, self.text_rope.len_lines());
             let start_idx = if self.text_rope.len_lines() == 0 { 0 } 
                 else { self.text_rope.line_to_char(self.top_line) };
             let end_idx = self.text_rope.line_to_char(self.top_line + max_lines);
-            let color = (0,0,0);
-            let trans = self.trans(draw_rect, rt, &color, &draw_ctx.viewport);
-            let text = self.text_rope.slice(start_idx..end_idx).as_str().unwrap();
-            rt.draw(&self.get_params(text, &color, &trans), draw_ctx);
+            rt.draw(self.text_rope.slice(start_idx..end_idx).as_str().unwrap(), &self.text_params, draw_rect, draw_ctx)
         }
         if let Some(select_time) = select_time {
             let millis = select_time.elapsed().unwrap().as_millis() % 1000;
             if millis < 500 {
                 let before_str = self.text_rope.slice(self.text_rope.line_to_char(cursor_line)..self.cursor.char_idx).as_str().unwrap();
                 let mut cursor_pt1 = Point::new(
-                    rt.measure(before_str, self.text_scale).x / draw_rect.size.x, 
+                    rt.measure(before_str, self.text_params.scale).x / draw_rect.size.x, 
                     (cursor_line - self.top_line) as f32 * line_height / draw_rect.size.y);
                 let mut cursor_pt2 = Point::new(cursor_pt1.x, cursor_pt1.y + line_height / draw_rect.size.y);
                 cursor_pt1 = draw_rect.transform(&draw_ctx.viewport).model_to_pixel(&cursor_pt1.to_vec4());
                 cursor_pt2 = draw_rect.transform(&draw_ctx.viewport).model_to_pixel(&cursor_pt2.to_vec4());
-                let cursor_line = LineBuilder::new().points2(&cursor_pt1, &cursor_pt2).get();
-                cursor_line.draw(draw_ctx);
+                draw_ctx.draw_line(cursor_pt1, cursor_pt2, rgb_to_f32(0, 0, 0), 3.);
             }
         }
     }
     pub fn needs_format(&self, draw_rect: &RotateRect, start_line: usize, rt: &RenderText) -> bool {
-        let start_line_width = rt.measure(self.text_rope.line(start_line).as_str().unwrap(), self.text_scale).x;
+        let start_line_width = rt.measure(self.text_rope.line(start_line).as_str().unwrap(), self.text_params.scale).x;
         if start_line_width > draw_rect.size.x {
             return true;
         }
@@ -184,7 +167,7 @@ impl TextBox {
             let next_line = self.text_rope.line(start_line + 1);
             if next_line.len_chars() > 0 {
                 let next_line_char = next_line.char(0);
-                let next_line_char_width = rt.char_size(next_line_char, self.text_scale).x;
+                let next_line_char_width = rt.char_size(next_line_char, self.text_params.scale).x;
                 return start_line_width + next_line_char_width <= draw_rect.size.x
             }
         }
@@ -198,7 +181,7 @@ impl TextBox {
         let mut line_x = 0.;
         let mut line_breaks = Vec::new();
         for (i, c) in self.text_rope.slice(start_char..).chars().enumerate() {
-            let add_break = line_x + rt.char_size(c, self.text_scale).x > draw_rect.size.x;
+            let add_break = line_x + rt.char_size(c, self.text_params.scale).x > draw_rect.size.x;
             let was_break = c == '\n';
             if add_break {
                 line_x = 0.;
@@ -206,7 +189,7 @@ impl TextBox {
             if add_break != was_break {
                 line_breaks.push((i + start_char, add_break));
             }
-            line_x += rt.char_size_w_advance(c, self.text_scale).x;
+            line_x += rt.char_size_w_advance(c, self.text_params.scale).x;
         }
         let mut offset: i32 = 0;
         for (idx, is_add) in line_breaks {

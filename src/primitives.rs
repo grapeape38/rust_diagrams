@@ -9,6 +9,7 @@ use std::ffi::CString;
 use std::f32::{self, consts::PI};
 use PrimType as PT;
 use crate::render_gl::{Shader, Program, SendUniforms, SendUniform};
+use crate::render_text::{RenderText};
 use crate::hexcolor::HexColor;
 use sem_graph_derive::SendUniforms;
 use macro_attr::{macro_attr, macro_attr_impl};
@@ -334,6 +335,9 @@ impl RotateRect {
     pub fn new(offset: Point, size: Point, rot: Radians) -> Self {
         RotateRect { offset, size, rot, trans: TransformCache::new() }
     }
+    pub fn from_rect(rect: Rect, rot: Radians) -> Self {
+        RotateRect { offset: rect.c1, size: Point::new(rect.width(), rect.height()), rot, trans: TransformCache::new() }
+    }
     pub fn drag(&mut self, offset: &Point) {
         self.offset += *offset;
     }
@@ -625,6 +629,9 @@ impl Default for Rect {
 
 #[allow(dead_code)]
 impl Rect {
+    pub fn empty() -> Self {
+        Rect::new(Point::origin(), Point::origin())
+    }
     pub fn new(c1: Point, c2: Point) -> Self {
         Rect::bounding_box(&[c1, c2])
     }
@@ -782,11 +789,32 @@ pub struct DrawCtx {
     pub prim_map: PrimMap,
     pub prog_map: ProgMap,
     pub viewport: Point,
+    pub render_text: RenderText
 }
 
 impl DrawCtx {
     pub fn new(viewport: &Point) -> DrawCtx {
-        DrawCtx { prim_map: prim_map(), prog_map: prog_map(), viewport: *viewport }
+        DrawCtx { prim_map: prim_map(), prog_map: prog_map(), viewport: *viewport, render_text: RenderText::new().unwrap() }
+    }
+    #[allow(dead_code)]
+    pub fn draw_circle(&self, radius: f32, center: Point, color: glm::Vec4, fill: bool) {
+        let rect = RotateRect::new(Point::new(center.x - radius, center.y - radius), Point::new(radius * 2., radius * 2.), Radians(0.));
+        let prim = if fill { PrimType::Circle } else { PrimType::Ring };
+        DrawPolygon { prim, fill, color, rect }.draw(self);
+    }
+    #[allow(dead_code)]
+    pub fn draw_rect(&self, rect: Rect, color: glm::Vec4, fill: bool, rot: Radians) {
+        let rect = RotateRect::from_rect(rect, rot);
+        DrawPolygon { prim: PrimType::Rect, fill, color, rect }.draw(self);
+    }
+    #[allow(dead_code)]
+    pub fn draw_square(&self, side: f32, offset: Point, color: glm::Vec4, fill: bool, rot: Radians) {
+        let rect = RotateRect::new(offset, Point::new(side, side), rot);
+        DrawPolygon { prim: PrimType::Rect, fill, color, rect }.draw(self);
+    }
+    #[allow(dead_code)]
+    pub fn draw_line(&self, p1: Point, p2: Point, color: glm::Vec4, line_width: f32) {
+        DrawLine { p1, p2, line_width, color }.draw(self);
     }
 }
 
@@ -896,4 +924,38 @@ impl LineBuilder {
 pub fn rgb_to_f32(r: u8, g: u8, b: u8) -> glm::Vec4 {
     glm::vec4(r as f32 / 255., g as f32 / 255., b as f32 / 255., 1.)
 }
+
+#[derive(Clone)]
+pub struct Border {
+    pub width: Point,
+    pub color: glm::Vec4
+}
+
+impl Border {
+    pub fn new(width: Point, color: glm::Vec4) -> Self {
+        Border { width, color }
+    }
+}
+
+pub struct BorderRect {
+    pub r: Rect,
+    fill_color: glm::Vec4,
+    pub border: Border
+}
+
+impl BorderRect { 
+    pub fn new(r: Rect, fill_color: glm::Vec4, border: Border) -> Self {
+        BorderRect { r, fill_color, border }
+    }
+    pub fn draw(&self, draw_ctx: &DrawCtx) {
+        let border = Rect::new(self.r.c1 - self.border.width, self.r.c2 + self.border.width);
+        draw_ctx.draw_rect(border.clone(), self.fill_color, true, Radians(0.)); 
+        draw_ctx.draw_rect(border.clone(), self.border.color, false, Radians(0.)); 
+    }
+}
+
+/*fn draw_triangle(radius: f32, center: &Point, color: (u8, u8, u8), draw_ctx: &DrawCtx) {
+    let rect = RotateRect::new(Point::new(center.x - radius, center.y - radius), Point::new(radius * 2., radius * 2.), Radians(0.));
+    DrawPolygon { prim: PrimType::Circle, fill: true, color: rgb_to_f32(color.0, color.1, color.2), rect }.draw(draw_ctx);
+}*/
 

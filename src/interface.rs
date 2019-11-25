@@ -10,9 +10,10 @@ use std::iter::FromIterator;
 use std::time::SystemTime;
 use crate::primitives::*;
 //use crate::primitives::ShapeProps as Shape;
-use crate::render_text::RenderText;
 use crate::textedit::{TextBox, get_char_from_keycode, get_dir_from_keycode};
+use crate::render_text::{TextParams};
 use crate::hexcolor::HexColor;
+use crate::button::Button;
 
 pub struct CursorMap(HashMap<SystemCursor, Cursor>);
 impl CursorMap {
@@ -153,10 +154,9 @@ pub struct AppState {
     selection: HashMap<ShapeID, ShapeSelectBox>,
     line_select: HashMap<ShapeID, SelectLine>,
     text_boxes: HashMap<ShapeID, TextBox>,
-    shape_bar: ShapeBar,
+    interface: Interface,
     drag_mode: DragMode,
     key_mode: KeyboardMode,
-    render_text: RenderText,
     hover_item: HoverItem,
     pub draw_ctx: DrawCtx,
     cursors: CursorMap
@@ -192,18 +192,44 @@ pub enum HoverItem {
    HoverCreateLine {start_pt: Point, last_pt: Point, color: (u8, u8, u8)}
 }
 
+pub type CallbackFn = Box<dyn FnOnce(&mut AppState)>;
+
+struct Interface {
+    shape_bar: ShapeBar,
+    tab_bar: TabBar,
+}
+
+impl Interface {
+    fn new(ctx: &DrawCtx) -> Self {
+        let x_offset = ctx.viewport.x / 5.;
+        let tab_bar_offset = Point::new(x_offset, 0.); 
+        let tab_bar = TabBar::new(tab_bar_offset);
+        let shape_bar_offset = Point::new(x_offset, tab_bar_offset.y + tab_bar.measure(ctx).y);
+        let shape_bar = ShapeBar::new(shape_bar_offset, &ctx.viewport);
+        Interface { shape_bar, tab_bar }
+    }
+    fn click(&mut self, pt: &Point, cursor: &mut SystemCursor, vp: &Point) -> Option<CallbackFn> {
+         self.shape_bar.click(pt, cursor, vp) 
+    }
+    fn draw(&self, draw_ctx: &DrawCtx) {
+        self.tab_bar.draw(draw_ctx);
+        self.shape_bar.draw(draw_ctx);
+    }
+}
+
 impl AppState {
     pub fn new(viewport: &Point) -> AppState {
+        let draw_ctx = DrawCtx::new(viewport);
+        let interface = Interface::new(&draw_ctx);
         AppState {
             draw_list: DrawList::new(),
-            draw_ctx: DrawCtx::new(viewport),
-            shape_bar: ShapeBar::new(viewport),
+            draw_ctx,
+            interface,
             selection: HashMap::new(),
             line_select: HashMap::new(),
             drag_mode: DragMode::DragNone,
             hover_item: HoverItem::HoverNone,
             key_mode: KeyboardMode::KeyboardNone,
-            render_text: RenderText::new().unwrap(),
             text_boxes: HashMap::new(),
             cursors: CursorMap::new()
         }
@@ -214,7 +240,7 @@ impl AppState {
     fn is_hover_text(&self, p: &Point, vp: &Point) -> Option<(ShapeID, usize)> {
         self.text_boxes.iter().find(|(id, _)| self.draw_list.get(id).unwrap().in_bounds(p, vp))
             .map(|(id, tb)| (id, tb, self.draw_list.get(id).unwrap().rect()))
-            .and_then(|(id, tb, rect)| tb.hover_text(p, &rect, &self.render_text, vp).map(|pos| (*id, pos)))
+            .and_then(|(id, tb, rect)| tb.hover_text(p, &rect, &self.draw_ctx.render_text, vp).map(|pos| (*id, pos)))
     }
     fn is_hover_select_box(&self, p: &Point, vp: &Point) -> Option<(ShapeID, BoxHover)> {
         self.selection.iter().filter_map(|(id, sb)| sb.get_hover(p, vp).map(|lh| (*id, lh))).nth(0)
@@ -278,20 +304,9 @@ impl AppState {
         if clear_select {
             self.clear_selection();
         }
-        if let Some(shape_action) = self.shape_bar.click_shape(&pt, &self.draw_ctx.viewport) {
-            match shape_action {
-                ShapeBarAction::CreateShape(item_id) => {
-                    *cursor =  SystemCursor::Crosshair;
-                    let size = Point::new(ShapeBarShape::DEFAULT_SIZE, ShapeBarShape::DEFAULT_SIZE);
-                    let r = Rect::new(*pt - size / 2., *pt + size / 2.);
-                    let s = self.shape_bar.get_shape(item_id, &r, false);
-                    self.hover_item = HoverItem::HoverShape(item_id, s);
-                }
-                ShapeBarAction::PickColor => {
-
-                }
-            };
-         }
+        if let Some(cb) = self.interface.click(pt, cursor, &self.draw_ctx.viewport) {
+            (cb)(self);
+        }
         else if let Some(click_shape) = self.draw_list.click_shape(&pt, &self.draw_ctx.viewport) {
             let s = self.draw_list.get(&click_shape).unwrap();
             match s {
@@ -353,7 +368,7 @@ impl AppState {
                }
                if let Some(tbox) = self.text_boxes.get_mut(&click_box) {
                    let rect = self.draw_list.get(&click_box).unwrap().rect();
-                   tbox.format_text(&rect, 0, &self.render_text);
+                   tbox.format_text(&rect, 0, &self.draw_ctx.render_text);
                }
             }
             DragMode::DragLineVertex { shape_id, line_vertex } => {
@@ -460,7 +475,7 @@ impl AppState {
                         DragMode::CreateShape { shape_id, start_pt, last_pt } => {
                             let r = Rect::new(start_pt, last_pt);
                             let fill = shape_id != ShapeBarShape::TextBox;
-                            let s = self.shape_bar.get_shape(
+                            let s = self.interface.shape_bar.get_shape(
                                 shape_id, &r, fill);
                             let id = self.draw_list.add(s);
                             if let ShapeBarShape::TextBox = shape_id {
@@ -492,14 +507,14 @@ impl AppState {
             if let Event::KeyDown { keycode: Some(keycode), .. } = *ev {
                 if let Some(ch) = get_char_from_keycode(keycode) {
                     let rect = self.draw_list.get(&shape_id).unwrap().rect();
-                    self.text_boxes.get_mut(&shape_id).unwrap().insert_char(ch, &rect, &self.render_text);
+                    self.text_boxes.get_mut(&shape_id).unwrap().insert_char(ch, &rect, &self.draw_ctx.render_text);
                 }
                 else if let Some(dir) = get_dir_from_keycode(keycode) {
                     self.text_boxes.get_mut(&shape_id).unwrap().move_cursor(dir);
                 }
                 else if keycode == Keycode::Backspace {
                     let rect = self.draw_list.get(&shape_id).unwrap().rect();
-                    self.text_boxes.get_mut(&shape_id).unwrap().delete_char(&rect, &self.render_text);
+                    self.text_boxes.get_mut(&shape_id).unwrap().delete_char(&rect, &self.draw_ctx.render_text);
                 }
             }
         }
@@ -525,7 +540,7 @@ impl AppState {
                 shape.draw(&self.draw_ctx);
             }
             HoverItem::HoverCreateLine{start_pt, last_pt, color} => {
-                LineBuilder::new().points2(&start_pt, &last_pt).color(color.0, color.1, color.2).get().draw(&self.draw_ctx);
+                self.draw_ctx.draw_line(start_pt, last_pt, rgb_to_f32(color.0, color.1, color.2), 3.);
             }
             _ => {}
         };
@@ -533,11 +548,11 @@ impl AppState {
     fn draw_drag_item(&self) {
         match self.drag_mode {
             DragMode::SelectBox{start_pt, last_pt} => {
-                Rect::new(start_pt, last_pt).builder().color(0,0,0).fill(false).get().draw(&self.draw_ctx);
+                self.draw_ctx.draw_rect(Rect::new(start_pt, last_pt), rgb_to_f32(0, 0, 0), false, Radians(0.));
             }
             DragMode::CreateShape{shape_id, start_pt, last_pt} => {
                 let r = Rect::new(start_pt, last_pt);
-                self.shape_bar.get_shape(shape_id, &r, false).draw(&self.draw_ctx);
+                self.interface.shape_bar.get_shape(shape_id, &r, false).draw(&self.draw_ctx);
             }
             _ => {}
         }
@@ -559,11 +574,11 @@ impl AppState {
                 _ => None
             };
             let rect = self.draw_list.get(&id).unwrap().rect();
-            tb.draw(&rect, select_time, &self.render_text, &self.draw_ctx);
+            tb.draw(&rect, select_time, &self.draw_ctx);
         }
     }
     pub fn render(&self) {
-        self.shape_bar.draw(&self.draw_ctx);
+        self.interface.draw(&self.draw_ctx);
         self.draw_list.draw(&self.draw_ctx);
         self.draw_text_boxes();
         self.draw_hover_item();
@@ -613,10 +628,8 @@ impl SelectLine {
     }
     fn draw_verts(&self, draw_ctx: &DrawCtx) {
         let radi = 7.;
-        &[self.0.p1, self.0.p2].iter()
-            .map(|v| ShapeBuilder::new().color(255,255,255).circle(radi as u32)
-                .offset((v.x - radi/2.) as i32, (v.y - radi/2.) as i32).get())
-            .for_each(|s| s.draw(draw_ctx));
+        &[self.0.p1, self.0.p2].iter().
+            for_each(|v| draw_ctx.draw_circle(radi, *v, rgb_to_f32(255, 255, 255), false));
     }
     fn draw(&self, draw_ctx: &DrawCtx) {
         self.draw_verts(draw_ctx);
@@ -797,18 +810,14 @@ impl ShapeSelectBox {
         Radians(angle)
     }
     fn draw_drag_circles(&self, draw_ctx: &DrawCtx) {
-        let radi = 7.;
+        let radi = 5.;
         self.get_drag_points(&draw_ctx.viewport).iter()
-            .map(|v| ShapeBuilder::new().color(255,255,255).circle(radi as u32)
-                .offset((v.x - radi/2.) as i32, (v.y - radi/2.) as i32).get())
-            .for_each(|s| s.draw(draw_ctx));
+            .for_each(|v| draw_ctx.draw_circle(radi, *v, rgb_to_f32(255, 255, 255), true));
     } 
     fn draw_rotate_circles(&self, draw_ctx: &DrawCtx) {
-        let radi = 12.;
+        let radi = 5.;
         self.get_rotate_points(&draw_ctx.viewport).iter()
-            .map(|v| ShapeBuilder::new().color(0,0,255).circle(radi as u32).fill(false)
-                .offset((v.x - radi/2.) as i32, (v.y - radi/2.) as i32).get())
-            .for_each(|s| s.draw(draw_ctx));
+            .for_each(|v| draw_ctx.draw_circle(radi, *v, rgb_to_f32(0, 0, 255), false));
     }
     fn draw(&self, draw_ctx: &DrawCtx) {
         //draw box
@@ -906,16 +915,13 @@ struct ShapeBar {
     draw_rect: Rect
 }
 
-enum ShapeBarAction {
-    CreateShape(ShapeBarShape),
-    PickColor,
-}
-
 impl ShapeBar {
-    fn new(viewport: &Point) -> Self {
+    fn new(offset: Point, viewport: &Point) -> Self {
         let draw_rect = Rect::new(
-            Point { x: viewport.x / 5., y: 0. }, 
-            Point { x: 4. * viewport.x / 5., y: viewport.y / 12.});
+            offset,
+            offset + Point { x: 3. * viewport.x / 5., y: viewport.y / 12.});
+            //Point { x: viewport.x / 5., y: 0. }, 
+            //Point { x: 4. * viewport.x / 5., y: viewport.y / 12.});
         let mut items = HashMap::new();
         let mut click_rects = HashMap::new();
         let shape_bar_shapes = [ShapeBarShape::Circle, ShapeBarShape::Triangle, 
@@ -934,7 +940,6 @@ impl ShapeBar {
             let rect = Rect::new(center - rect_size / 2., center + rect_size / 2.);
             click_rects.insert(s.clone(), rect.clone());
             let fill = *s != ShapeBarShape::TextBox;
-            
             items.insert(s.clone(), s.get_item(&rect, fill));
         }
         ShapeBar {
@@ -943,23 +948,37 @@ impl ShapeBar {
             draw_rect,
         }
     }
+    fn measure(&self) -> Point {
+        self.draw_rect.size()
+    }
     fn get_shape(&self, id: ShapeBarShape, r: &Rect, fill: bool) -> Shape {
         match id.get_item(r, fill) {
             ShapeBarItem::Shape(s) => s,
             _ => Shape::Polygon(DrawPolygon::default())
         }
     }
-    fn click_shape(&mut self, p: &Point, vp: &Point) -> Option<ShapeBarAction> {
-        self.click_rects.iter().find(|(_, r)| r.in_bounds(p, vp)).map(|(id, _)| *id)
-            .map(|id|
+    fn click(&mut self, p: &Point, cursor: &mut SystemCursor, vp: &Point) -> Option<CallbackFn> {
+        let bar_item = self.click_rects.iter().find(|(_, r)| r.in_bounds(p, vp)).map(|(id, _)| *id);
+        match bar_item {
+            None => None,
+            Some(id) => {
                 match id {
-                    ShapeBarShape::ColorPicker => ShapeBarAction::PickColor,
-                    _ => ShapeBarAction::CreateShape(id)
+                    ShapeBarShape::ColorPicker => None,
+                    _ => { 
+                        let size = Point::new(ShapeBarShape::DEFAULT_SIZE, ShapeBarShape::DEFAULT_SIZE);
+                        let r = Rect::new(*p - size / 2., *p + size / 2.);
+                        let s = self.get_shape(id, &r, false);
+                        *cursor = SystemCursor::Crosshair;
+                        Some(Box::new(move |app: &mut AppState| {
+                            app.hover_item = HoverItem::HoverShape(id, s);
+                        }))
+                    }
                 }
-            )
+            }
+        }
     }
     fn draw(&self, draw_ctx: &DrawCtx) {
-        self.draw_rect.builder().color(120,50,200).get().draw(draw_ctx);
+        draw_ctx.draw_rect(self.draw_rect.clone(), rgb_to_f32(120, 50, 200), true, Radians(0.)); 
         self.items.values().for_each(|s| s.draw(draw_ctx));
     }
 }
@@ -968,4 +987,54 @@ impl ShapeBar {
 enum ClickResponse {
     Clicked,
     NotClicked
+}
+
+pub struct TabBar {
+    offset: Point,
+    tabs: Vec<Button>
+}
+
+impl TabBar {
+    pub fn new(offset: Point) -> Self { 
+        let border = Border::new(Point::new(5., 5.), rgb_to_f32(0, 0, 0));
+        let canvas_button = Button::new(
+            "Canvas",
+            TextParams::new(),
+            border.clone(),
+            rgb_to_f32(0, 255, 255),
+            Box::new(|_: &mut AppState| { println!("Clicked!"); })
+        );
+        let graph_button = Button::new(
+            "Graph",
+            TextParams::new(),
+            border.clone(),
+            rgb_to_f32(0, 255, 255),
+            Box::new(|_: &mut AppState| { println!("Clicked!"); })
+        );
+        let tabs = vec![canvas_button, graph_button];
+        TabBar { offset, tabs }
+    }
+    pub fn measure(&self, ctx: &DrawCtx) -> Point {
+        self.tabs.iter().fold(Point::origin(), |size, tab| {
+            let m = tab.measure(&ctx.render_text);
+            Point::new(
+                size.x + m.x,
+                size.y.max(m.y) 
+            )
+        })
+    }
+    pub fn click(&self, pt: &Point, ctx: &DrawCtx) -> Option<CallbackFn> {
+        None
+        /*let mut off = self.offset;
+        self.tabs.iter().map(|t| 
+            (t, Rect::new(off, off + t.measure(&ctx.render_text)))).
+            find(|(_, r)| r.in_bounds(pt, &ctx.viewport)).map(|(t, _)| t.callback.clone()) */
+    }
+    pub fn draw(&self, ctx: &DrawCtx) {
+        let mut off = self.offset;
+        for t in &self.tabs { 
+            t.draw(&off, ctx);
+            off.x += t.measure(&ctx.render_text).x;
+        }
+    }
 }
